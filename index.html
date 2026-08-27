@@ -660,6 +660,25 @@
   .cover-dropzone img{ width:100%; height:100%; object-fit:cover; position:absolute; inset:0; }
   .cover-dropzone svg{ width:22px; height:22px; }
 
+  /* Barcode scan modal (opens on top of the Add item modal) */
+  #lib-scan-btn svg{ width:16px; height:16px; flex:none; } /* unsized inline SVG default-renders huge — see build notes */
+  .scan-video-wrap{
+    position:relative; width:100%; aspect-ratio:4/3; background:#111; border-radius:10px; overflow:hidden;
+  }
+  .scan-video-wrap video{ width:100%; height:100%; object-fit:cover; display:block; }
+  .scan-viewfinder{
+    position:absolute; inset:14%; border:2px solid rgba(255,255,255,.75); border-radius:10px;
+    box-shadow:0 0 0 999px rgba(0,0,0,.28); pointer-events:none;
+  }
+  .scan-status-line{ text-align:center; font-size:.8rem; color:var(--ink-faint); margin:8px 0 0; }
+  .scan-result{ display:flex; gap:12px; align-items:center; }
+  .scan-result-cover{ width:64px; height:96px; object-fit:cover; border-radius:6px; flex:none; background:var(--surface-2); }
+  .scan-result-cover-blank{ display:flex; align-items:center; justify-content:center; color:var(--ink-faint); }
+  .scan-result-cover-blank svg{ width:24px; height:24px; }
+  .scan-result-title{ font-weight:700; font-size:.95rem; }
+  .scan-result-sub{ font-size:.8rem; color:var(--ink-faint); margin-top:2px; }
+  .scan-result-source{ font-size:.7rem; color:var(--ink-faint); margin-top:4px; }
+
   .lib-history-row{ display:flex; align-items:flex-start; gap:12px; padding:10px 0; border-bottom:1px solid var(--border-soft); }
   .lib-history-row:last-child{ border-bottom:none; }
   .lib-history-dot{ width:8px; height:8px; border-radius:50%; flex:none; margin-top:6px; }
@@ -2681,6 +2700,24 @@
   var libraryShowLogActivity = false;  // small modal for logging progress/session/note on the open item
   var libraryShowNoteEdit = false;     // whether the item detail Notes panel is in edit mode
   var libraryPendingCoverImage = null; // resized data URL from the Add/Edit item cover picker, applied on submit
+  var libraryPendingScanSource = null; // "openlibrary" | "musicbrainz" | "barcode" (scanned, unmatched) — carried onto payload.metadataSource at submit
+  var libraryPendingScanCode = null;   // raw scanned/typed code — carried onto payload.externalId at submit
+  /* ---- Barcode scan state (opened from inside the Add item modal) ---- */
+  var libraryShowScan = false;
+  var libScanStatus = "idle";     // idle | starting | scanning | error | looking-up | found | nomatch
+  var libScanErrorMsg = "";
+  var libScanResult = null;       // { matched, code, source, fields } from scanLookup()
+  var libScanManualCode = "";
+  /* Live camera/decoder handles — deliberately NOT app state (never persisted, never touched by
+     renderLibrary's normal render-from-state flow): renderViews() does a full innerHTML replace on
+     every call, which would tear down a live <video> element, so the camera is only ever driven
+     from wireView() (direct DOM patches + a manual re-render at real state transitions), never from
+     the render functions themselves. See startScanCamera()/stopScanCamera() for the full story. */
+  var libScanStream = null;
+  var libScanRAFId = null;
+  var libScanZXingReader = null;  // ZXing controls object (Safari/iOS fallback path), has .stop()
+  var libScanDetector = null;     // cached native BarcodeDetector instance
+  var libScanRunToken = 0;        // bumped on every start/stop so stale async callbacks self-cancel
   /* ---- Study nav state ---- */
   var studyPage = "overview";        // 'overview' | 'subject' | 'material'
   var studySubjectId = null;
@@ -2960,6 +2997,7 @@
   var STAR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l2.6 5.6 6.1.7-4.5 4.2 1.2 6-5.4-3-5.4 3 1.2-6-4.5-4.2 6.1-.7Z"/></svg>';
   var HEART_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.6-10-9.3C.4 7.6 2.4 4 6 4c2.2 0 3.8 1.3 6 3.8C14.2 5.3 15.8 4 18 4c3.6 0 5.6 3.6 4 7.2-2.5 4.7-10 9.3-10 9.3Z"/></svg>';
   var CAMERA_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.5-2.5h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13.5" r="3.5"/></svg>';
+  var BARCODE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5v14M7 5v14M10 5v14M14 5v14M16 5v14M20 5v14"/></svg>';
   var CATEGORY_ICON_SVGS = { book:BOOK_SVG, film:FILM_SVG, tv:TV_SVG, disc:DISC_SVG, mic:MIC_SVG, wineglass:WINEGLASS_SVG, tag:TAG_SVG };
   /* Per-category display metadata: color accent, icon key, default progress type, and the
      wording each status maps to for that category (e.g. books "active" reads as "Reading",
@@ -2989,6 +3027,299 @@
   function libraryStatusLabel(catId, status){
     var meta = categoryMeta(catId);
     return meta.statusLabels[status] || DEFAULT_CATEGORY_META.statusLabels[status] || capitalize(status);
+  }
+  /* ---- Barcode scan: free public lookups, no API key, no cost ----
+     Only Books and Music have a natural free public barcode->metadata source, so those two are
+     wired to a live lookup. Every other built-in category (Movies/TV/Podcasts/Wine) and any custom
+     category the user adds later has no entry in LOOKUP_PROVIDERS — scanLookup() falls through to
+     a generic "matched:false" result for those, which still carries the raw scanned code so it's
+     saved on the item (metadataSource:"barcode") rather than discarded. Wiring up a real source for
+     one of those categories later is a matter of adding one more entry here; nothing else about the
+     scan flow needs to change. Disclosed to the user: the two live sources below are believed
+     correct from current public documentation but this sandbox has no camera and cannot reach
+     openlibrary.org/musicbrainz.org directly to exercise them end-to-end — worth a real test on a
+     phone once deployed. */
+  function fetchJSON(url){
+    return fetch(url).then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); });
+  }
+  function isbnLikely(code){ return /^97[89]\d{10}$/.test(code) || /^\d{9}[\dXx]$/.test(code); }
+  function lookupOpenLibrary(code){
+    return fetchJSON("https://openlibrary.org/api/books?bibkeys=ISBN:"+encodeURIComponent(code)+"&format=json&jscmd=data")
+      .then(function(data){
+        var rec = data && data["ISBN:"+code];
+        if(!rec || !rec.title) return null;
+        var authors = (rec.authors||[]).map(function(a){ return a.name; }).filter(Boolean).join(", ");
+        var publishers = (rec.publishers||[]).map(function(p){ return p.name; }).filter(Boolean).join(", ");
+        var yearMatch = (rec.publish_date||"").match(/\d{4}/);
+        var cover = rec.cover ? (rec.cover.large||rec.cover.medium||rec.cover.small||"") : "";
+        return {
+          title: rec.title, creator: authors, year: yearMatch?yearMatch[0]:"",
+          publisher: publishers, coverImage: cover,
+          progressTotal: (typeof rec.number_of_pages==="number") ? rec.number_of_pages : null,
+          isbn: code
+        };
+      });
+  }
+  function lookupMusicBrainz(code){
+    return fetchJSON("https://musicbrainz.org/ws/2/release/?query=barcode:"+encodeURIComponent(code)+"&fmt=json")
+      .then(function(data){
+        var rel = data && (data.releases||[])[0];
+        if(!rel || !rel.title) return null;
+        var artist = (rel["artist-credit"]||[]).map(function(c){ return c.name; }).filter(Boolean).join(", ");
+        var yearMatch = (rel.date||"").match(/\d{4}/);
+        var media = (rel.media||[])[0];
+        return {
+          title: rel.title, creator: artist, year: yearMatch?yearMatch[0]:"",
+          tracks: (media && typeof media["track-count"]==="number") ? media["track-count"] : null,
+          physicalFormat: (media && media.format) ? media.format : "",
+          coverImage: rel.id ? ("https://coverartarchive.org/release/"+rel.id+"/front-250") : ""
+        };
+      });
+  }
+  var LOOKUP_PROVIDERS = {
+    books: { source:"openlibrary", label:"Open Library", lookup:lookupOpenLibrary },
+    music: { source:"musicbrainz", label:"MusicBrainz",  lookup:lookupMusicBrainz }
+  };
+  /* Resolves to { matched, code, source, fields? }. Never rejects — a network/parse failure is
+     reported as an unmatched result (with errored:true) rather than throwing, so the calling UI
+     code never needs its own try/catch. */
+  function scanLookup(catId, code){
+    var provider = LOOKUP_PROVIDERS[catId];
+    if(!provider) return Promise.resolve({ matched:false, code:code, source:"barcode" });
+    return provider.lookup(code).then(function(fields){
+      if(!fields) return { matched:false, code:code, source:"barcode" };
+      return { matched:true, code:code, source:provider.source, fields:fields };
+    }).catch(function(){ return { matched:false, code:code, source:"barcode", errored:true }; });
+  }
+
+  /* ---- Barcode scan: camera + decode engine ----
+     Driven entirely from wireView (direct DOM patches + explicit renderViews() calls only at real
+     state transitions), never from the render functions — see the libScan* state comment above for
+     why. Two decode paths: the native BarcodeDetector API (Chrome/Edge/Android, no library needed)
+     run through our own requestAnimationFrame loop, or — for browsers without it, notably Safari/
+     iOS as of this build — a lazily-loaded ZXing fallback (its own continuous-decode loop, we just
+     hand it the video element and a callback). Manual code entry is always offered alongside the
+     camera regardless of which path is used, so the feature never fully depends on either working. */
+  function stopScanCamera(){
+    libScanRunToken++; // invalidates any in-flight getUserMedia/detect callback still resolving
+    if(libScanRAFId){ cancelAnimationFrame(libScanRAFId); libScanRAFId=null; }
+    if(libScanZXingReader){ try{ libScanZXingReader.stop(); }catch(e){} libScanZXingReader=null; }
+    if(libScanStream){
+      libScanStream.getTracks().forEach(function(t){ try{ t.stop(); }catch(e){} });
+      libScanStream=null;
+    }
+  }
+  function onBarcodeDetected(code){
+    stopScanCamera();
+    libScanStatus="looking-up";
+    renderScanModal();
+    var catRow = document.getElementById("lib-form-cat-row");
+    var catId = catRow ? catRow.getAttribute("data-selected") : "books";
+    scanLookup(catId, code).then(function(result){
+      libScanResult = result;
+      libScanStatus = result.matched ? "found" : "nomatch";
+      renderScanModal();
+    });
+  }
+  function scanDetectLoopNative(video){
+    var myToken = libScanRunToken;
+    function tick(){
+      if(myToken!==libScanRunToken) return; // stopped/superseded — stop looping silently
+      if(video.readyState < 2){ libScanRAFId=requestAnimationFrame(tick); return; }
+      if(!libScanDetector){
+        try{ libScanDetector = new window.BarcodeDetector({ formats:["ean_13","ean_8","upc_a","upc_e","code_128","code_39"] }); }
+        catch(e){ libScanDetector=null; }
+      }
+      if(!libScanDetector){ libScanRAFId=requestAnimationFrame(tick); return; }
+      libScanDetector.detect(video).then(function(codes){
+        if(myToken!==libScanRunToken) return;
+        if(codes && codes[0] && codes[0].rawValue){ onBarcodeDetected(codes[0].rawValue); return; }
+        libScanRAFId=requestAnimationFrame(tick);
+      }).catch(function(){
+        if(myToken!==libScanRunToken) return;
+        libScanRAFId=requestAnimationFrame(tick);
+      });
+    }
+    tick();
+  }
+  var libScanZXingLoadPromise = null;
+  function ensureZXingLoaded(){
+    if(window.ZXingBrowser && window.ZXingBrowser.BrowserMultiFormatReader) return Promise.resolve();
+    if(libScanZXingLoadPromise) return libScanZXingLoadPromise;
+    libScanZXingLoadPromise = new Promise(function(resolve, reject){
+      var s = document.createElement("script");
+      s.src = "https://cdn.jsdelivr.net/npm/@zxing/browser@0/umd/index.min.js";
+      s.onload = function(){
+        if(window.ZXingBrowser && window.ZXingBrowser.BrowserMultiFormatReader) resolve();
+        else reject(new Error("ZXing loaded but BrowserMultiFormatReader not found"));
+      };
+      s.onerror = function(){ reject(new Error("Failed to load barcode-scanning library")); };
+      document.head.appendChild(s);
+    });
+    return libScanZXingLoadPromise;
+  }
+  function startScanCameraZXing(video){
+    var myToken = libScanRunToken;
+    ensureZXingLoaded().then(function(){
+      if(myToken!==libScanRunToken) return;
+      var reader = new window.ZXingBrowser.BrowserMultiFormatReader();
+      reader.decodeFromVideoDevice(undefined, video, function(result){
+        if(myToken!==libScanRunToken) return;
+        if(result && result.getText) onBarcodeDetected(result.getText());
+      }).then(function(controls){
+        if(myToken!==libScanRunToken){ try{ controls.stop(); }catch(e){} return; }
+        libScanZXingReader = controls;
+        libScanStatus="scanning";
+        var statusEl = document.getElementById("scan-status-text");
+        if(statusEl) statusEl.textContent = "Point your camera at the barcode…";
+      }).catch(function(err){
+        if(myToken!==libScanRunToken) return;
+        libScanStatus="error";
+        libScanErrorMsg = (err && err.name==="NotAllowedError") ? "Camera access was denied. Enter the code by hand below instead." : "Couldn't start the camera. Enter the code by hand below instead.";
+        renderScanModal();
+      });
+    }).catch(function(){
+      if(myToken!==libScanRunToken) return;
+      libScanStatus="error";
+      libScanErrorMsg = "This browser can't scan a barcode automatically. Enter the code by hand below instead.";
+      renderScanModal();
+    });
+  }
+  function startScanCamera(){
+    if(libScanStatus!=="idle") return; // caller signals "please start" by leaving status at idle
+    libScanStatus="starting";
+    var myToken = ++libScanRunToken;
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      libScanStatus="error";
+      libScanErrorMsg = "Camera not available in this browser. Enter the code by hand below instead.";
+      renderScanModal(); return;
+    }
+    var video = document.getElementById("scan-video");
+    if(!video) return; // modal not in the DOM (shouldn't happen, defensive)
+    if(!window.BarcodeDetector){
+      // Safari/iOS path: let ZXing manage its own camera request, don't also call getUserMedia here.
+      startScanCameraZXing(video);
+      return;
+    }
+    navigator.mediaDevices.getUserMedia({ video:{ facingMode:"environment" } }).then(function(stream){
+      if(myToken!==libScanRunToken){ stream.getTracks().forEach(function(t){ t.stop(); }); return; }
+      libScanStream = stream;
+      var v = document.getElementById("scan-video");
+      if(!v){ stream.getTracks().forEach(function(t){ t.stop(); }); return; }
+      v.srcObject = stream;
+      v.play().catch(function(){});
+      libScanStatus = "scanning";
+      var statusEl = document.getElementById("scan-status-text");
+      if(statusEl) statusEl.textContent = "Point your camera at the barcode…";
+      scanDetectLoopNative(v);
+    }).catch(function(err){
+      if(myToken!==libScanRunToken) return;
+      libScanStatus="error";
+      libScanErrorMsg = (err && err.name==="NotAllowedError") ? "Camera access was denied. Enter the code by hand below instead." : "Couldn't start the camera. Enter the code by hand below instead.";
+      renderScanModal();
+    });
+  }
+  function resetScanState(){
+    stopScanCamera();
+    libScanStatus="idle"; libScanErrorMsg=""; libScanResult=null; libScanManualCode="";
+  }
+  /* Switches the Add item form's active category pill via direct DOM patches (no renderViews() —
+     same reasoning as the scan modal above: this form must survive an in-progress edit untouched).
+     Used both by the pill row's own click handler and by the scan "Use this" flow when a matched
+     result implies a different category than whatever was selected when scanning started. */
+  function switchLibFormCategory(newCat){
+    var row = document.getElementById("lib-form-cat-row");
+    if(!row) return;
+    Array.prototype.forEach.call(row.querySelectorAll(".subject-pill"), function(x){
+      var active = x.getAttribute("data-lib-form-category")===newCat;
+      x.classList.toggle("active", active);
+      x.style.background = active ? libraryCategoryColorVar(newCat) : "";
+    });
+    row.setAttribute("data-selected", newCat);
+    Array.prototype.forEach.call(document.querySelectorAll("[data-lib-catfields]"), function(block){
+      block.style.display = block.getAttribute("data-lib-catfields")===newCat ? "contents" : "none";
+    });
+    var statusSel = document.getElementById("lib-status");
+    if(statusSel) Array.prototype.forEach.call(statusSel.options, function(opt){
+      opt.textContent = libraryStatusLabel(newCat, opt.value);
+    });
+  }
+  /* ---- Barcode scan: modal lifecycle, deliberately OUTSIDE the normal render pipeline ----
+     The Add item modal lives inside RENDERERS[tab]()'s big HTML string, rebuilt from `vals` (a
+     snapshot taken when it opened) on every renderViews() call. If the scan overlay were part of
+     that same string, closing/advancing it would call renderViews() and silently wipe out anything
+     already typed into the Add item form (including fields the scan itself just filled in — caught
+     via a failing test before this was fixed). So instead this overlay is appended directly to
+     <body> (same precedent as #auth-screen/#migration-offer/#account-modal) and redrawn by
+     replacing only its own subtree — renderViews() is never called while it's open. */
+  function renderScanModal(){
+    var existing = document.querySelector("[data-scan-modal-backdrop]");
+    if(existing) existing.remove();
+    if(!libraryShowScan) return;
+    document.body.insertAdjacentHTML("beforeend", scanBarcodeModalHTML());
+    wireScanModal();
+  }
+  function closeScanModal(){
+    libraryShowScan=false; resetScanState(); renderScanModal();
+  }
+  function wireScanModal(){
+    var backdrop = document.querySelector("[data-scan-modal-backdrop]");
+    if(!backdrop) return;
+    backdrop.addEventListener("click", function(ev){ if(ev.target===backdrop) closeScanModal(); });
+    var cancelBtn = backdrop.querySelector("[data-scan-cancel]");
+    if(cancelBtn) cancelBtn.addEventListener("click", closeScanModal);
+    var againBtn = backdrop.querySelector("[data-scan-again]");
+    if(againBtn) againBtn.addEventListener("click", function(){ resetScanState(); renderScanModal(); });
+    var manualBtn = backdrop.querySelector("#scan-manual-submit");
+    var manualInput = backdrop.querySelector("#scan-manual-input");
+    function submitManual(){
+      var code = manualInput ? manualInput.value.trim() : "";
+      if(!code) return;
+      libScanManualCode = code;
+      onBarcodeDetected(code);
+    }
+    if(manualBtn) manualBtn.addEventListener("click", submitManual);
+    if(manualInput){
+      // Keep libScanManualCode in sync on every keystroke (not just at submit) — a re-render can
+      // land mid-typing (camera/ZXing init resolving asynchronously in the background) and the input
+      // is rebuilt from this state, so without this the re-render would silently erase whatever the
+      // user had already typed.
+      manualInput.addEventListener("input", function(){ libScanManualCode = manualInput.value; });
+      manualInput.addEventListener("keydown", function(ev){ if(ev.key==="Enter"){ ev.preventDefault(); submitManual(); } });
+    }
+    var useBtn = backdrop.querySelector("[data-scan-use]");
+    if(useBtn) useBtn.addEventListener("click", function(){
+      var r = libScanResult || {};
+      libraryPendingScanSource = r.source || "barcode";
+      libraryPendingScanCode = r.code || "";
+      if(r.matched){
+        var f = r.fields||{};
+        var catRow = document.getElementById("lib-form-cat-row");
+        var curCat = catRow ? catRow.getAttribute("data-selected") : null;
+        var wantCat = LOOKUP_PROVIDERS[curCat] ? curCat : (isbnLikely(r.code) ? "books" : curCat);
+        if(wantCat && wantCat!==curCat) switchLibFormCategory(wantCat);
+        var setVal = function(id,val){ var el=document.getElementById(id); if(el && val!=null && val!=="") el.value=val; };
+        setVal("lib-title", f.title); setVal("lib-creator", f.creator); setVal("lib-year", f.year);
+        if(f.publisher) setVal("lib-publisher", f.publisher);
+        if(f.isbn) setVal("lib-isbn", f.isbn);
+        if(typeof f.progressTotal==="number") setVal("lib-total-pages", f.progressTotal);
+        if(typeof f.tracks==="number") setVal("lib-tracks", f.tracks);
+        if(f.physicalFormat) setVal("lib-format", f.physicalFormat);
+        if(f.coverImage){
+          libraryPendingCoverImage = f.coverImage;
+          var prev = document.getElementById("lib-cover-preview"), ph = document.getElementById("lib-cover-placeholder");
+          if(prev){ prev.src=f.coverImage; prev.style.display="block"; }
+          if(ph) ph.style.display="none";
+        }
+      } else if(isbnLikely(r.code)){
+        var catRow2 = document.getElementById("lib-form-cat-row");
+        if(catRow2 && catRow2.getAttribute("data-selected")!=="books") switchLibFormCategory("books");
+        var isbnEl = document.getElementById("lib-isbn");
+        if(isbnEl) isbnEl.value = r.code;
+      }
+      libraryShowScan=false; resetScanState(); renderScanModal();
+    });
+    if(libraryShowScan && libScanStatus==="idle") startScanCamera();
   }
   /* All activity for one item, oldest first, kept for pace/history calculations. */
   function libraryItemProgressEntries(itemId){
@@ -4862,6 +5193,7 @@
         '<h2>'+(editing?"Edit item":"Add item")+'</h2>'+
         '<form class="stack" id="lib-item-form">'+
           (editing?'':'<label class="f">Category<div class="swatch-row" style="flex-wrap:wrap" id="lib-form-cat-row" data-selected="'+catId+'">'+catPills+'</div></label>')+
+          (editing?'':'<button type="button" class="btn" id="lib-scan-btn" style="align-self:flex-start;display:flex;align-items:center;gap:6px">'+BARCODE_SVG+' Scan barcode</button>')+
           '<div style="display:flex;gap:14px;align-items:flex-start">'+
             '<label class="cover-dropzone" id="lib-cover-drop">'+
               '<img id="lib-cover-preview" src="'+esc(vals.coverImage||"")+'" alt="" style="display:'+(vals.coverImage?"block":"none")+'">'+
@@ -4897,6 +5229,56 @@
             '<button type="submit" class="btn btn-primary">'+(editing?"Save":"Add item")+'</button>'+
           '</div>'+
         '</form>'+
+      '</div>'+
+    '</div>';
+  }
+  /* Renders on top of the (still-open, untouched) Add item modal — two stacked .modal-backdrop
+     elements share the same z-index, so DOM order alone puts this one on top. Closing it (Cancel /
+     "Enter manually instead" / outside click) just hides this overlay and returns to the Add item
+     form underneath; it never touches libraryShowAddItem. */
+  function scanBarcodeModalHTML(){
+    var catRow = document.getElementById("lib-form-cat-row");
+    var catId = catRow ? catRow.getAttribute("data-selected") : (libraryAddItemCategoryId||"books");
+    var catName = (libraryCategoryById(catId)||{}).name || capitalize(catId);
+    var hasLiveProvider = !!LOOKUP_PROVIDERS[catId];
+    var body = "";
+    if(libScanStatus==="found" || libScanStatus==="nomatch"){
+      var r = libScanResult || {};
+      if(libScanStatus==="found"){
+        var f = r.fields||{};
+        body = '<div class="scan-result">'+
+          (f.coverImage ? '<img class="scan-result-cover" src="'+esc(f.coverImage)+'" alt="">' : '<div class="scan-result-cover scan-result-cover-blank">'+BOOK_SVG+'</div>')+
+          '<div><div class="scan-result-title">'+esc(f.title||"Untitled")+'</div>'+
+          (f.creator?'<div class="scan-result-sub">'+esc(f.creator)+(f.year?" · "+esc(f.year):"")+'</div>':(f.year?'<div class="scan-result-sub">'+esc(f.year)+'</div>':''))+
+          '<div class="scan-result-source">Found via '+esc(LOOKUP_PROVIDERS[catId].label)+'</div></div>'+
+        '</div>'+
+        '<div class="modal-actions"><button type="button" class="btn-ghost" data-scan-again>Scan again</button><button type="button" class="btn btn-primary" data-scan-use>Use this</button></div>';
+      } else {
+        body = '<p class="empty">Barcode read: <strong>'+esc(r.code||"")+'</strong>. '+
+          (hasLiveProvider ? "No match found for it — " : ("No automatic lookup source for "+esc(catName)+" yet — "))+
+          'you can still save the code and fill in the details yourself; a smarter lookup for this category can be added later without losing it.</p>'+
+        '<div class="modal-actions"><button type="button" class="btn-ghost" data-scan-again>Scan again</button><button type="button" class="btn btn-primary" data-scan-use>Continue anyway</button></div>';
+      }
+    } else if(libScanStatus==="looking-up"){
+      body = '<p class="empty">Looking it up…</p>';
+    } else {
+      body = '<div class="scan-video-wrap">'+
+          '<video id="scan-video" autoplay playsinline muted></video>'+
+          '<div class="scan-viewfinder"></div>'+
+        '</div>'+
+        '<p class="scan-status-line" id="scan-status-text">'+
+          (libScanStatus==="error" ? esc(libScanErrorMsg) : "Starting camera…")+
+        '</p>'+
+        '<div class="field-row" style="align-items:flex-end">'+
+          '<label class="f" style="flex:1">Or enter the code by hand<input type="text" id="scan-manual-input" inputmode="numeric" value="'+esc(libScanManualCode)+'" placeholder="e.g. 9780140328721"></label>'+
+          '<button type="button" class="btn" id="scan-manual-submit">Look up</button>'+
+        '</div>'+
+        '<div class="modal-actions"><button type="button" class="btn-ghost" data-scan-cancel>Cancel</button></div>';
+    }
+    return '<div class="modal-backdrop" data-scan-modal-backdrop>'+
+      '<div class="modal-card" style="max-width:460px">'+
+        '<h2>Scan barcode</h2>'+
+        '<div class="stack">'+body+'</div>'+
       '</div>'+
     '</div>';
   }
@@ -8428,6 +8810,8 @@
       function libraryCloseModals(){
         libraryShowAddItem=false; libraryEditingItemId=null; libraryAddItemCategoryId=null;
         libraryShowAddCategory=false; libraryShowLogActivity=false; libraryPendingCoverImage=null;
+        libraryPendingScanSource=null; libraryPendingScanCode=null;
+        libraryShowScan=false; resetScanState(); renderScanModal(); // removes the body-level overlay, if any
       }
       function num(id){ var el=document.getElementById(id); return (el && el.value!=="") ? Number(el.value) : null; }
       function txt(id){ var el=document.getElementById(id); return el ? el.value.trim() : ""; }
@@ -8530,6 +8914,7 @@
           libraryEditingItemId=null;
           libraryAddItemCategoryId = libraryPage==="category" ? libraryActiveCategoryId : null;
           libraryPendingCoverImage=null;
+          libraryPendingScanSource=null; libraryPendingScanCode=null;
           libraryShowAddItem=true; renderViews();
         });
       });
@@ -8537,21 +8922,20 @@
         btn.addEventListener("click", function(){
           libraryEditingItemId=btn.getAttribute("data-lib-edit-item");
           libraryPendingCoverImage=null;
+          libraryPendingScanSource=null; libraryPendingScanCode=null;
           libraryShowAddItem=true; renderViews();
         });
       });
       Array.prototype.forEach.call(document.querySelectorAll("[data-lib-form-category]"), function(sw){
-        sw.addEventListener("click", function(){
-          var row = document.getElementById("lib-form-cat-row");
-          var newCat = sw.getAttribute("data-lib-form-category");
-          Array.prototype.forEach.call(row.querySelectorAll(".subject-pill"), function(x){ x.classList.remove("active"); x.style.background=""; });
-          sw.classList.add("active");
-          sw.style.background = libraryCategoryColorVar(newCat);
-          row.setAttribute("data-selected", newCat);
-          Array.prototype.forEach.call(document.querySelectorAll("[data-lib-catfields]"), function(block){
-            block.style.display = block.getAttribute("data-lib-catfields")===newCat ? "contents" : "none";
-          });
-        });
+        sw.addEventListener("click", function(){ switchLibFormCategory(sw.getAttribute("data-lib-form-category")); });
+      });
+
+      /* ---- Scan barcode: opens the body-level overlay (see renderScanModal()) ---- */
+      var scanBtn = document.getElementById("lib-scan-btn");
+      if(scanBtn) scanBtn.addEventListener("click", function(){
+        resetScanState();
+        libraryShowScan=true;
+        renderScanModal();
       });
       var libCoverInput = document.getElementById("lib-cover-input");
       if(libCoverInput) libCoverInput.addEventListener("change", function(){
@@ -8605,6 +8989,7 @@
           coverImage: libraryPendingCoverImage!=null ? libraryPendingCoverImage : (editingItem ? (editingItem.coverImage||"") : ""),
           updatedAt: todayISO()
         };
+        if(libraryPendingScanSource){ payload.metadataSource = libraryPendingScanSource; payload.externalId = libraryPendingScanCode||""; }
         if(catId==="books"){
           payload.edition=txt("lib-edition"); payload.publisher=txt("lib-publisher"); payload.isbn=txt("lib-isbn");
           payload.progressTotal=num("lib-total-pages"); payload.progressCurrent=num("lib-current-pages");
