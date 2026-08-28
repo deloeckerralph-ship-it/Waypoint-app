@@ -679,6 +679,25 @@
   .scan-result-sub{ font-size:.8rem; color:var(--ink-faint); margin-top:2px; }
   .scan-result-source{ font-size:.7rem; color:var(--ink-faint); margin-top:4px; }
 
+  /* Title search (v22) result list */
+  .search-result-list{ max-height:340px; overflow-y:auto; margin-top:10px; }
+  .search-result-row{
+    display:flex; align-items:center; gap:12px; width:100%; text-align:left;
+    background:none; border:none; padding:9px 4px; border-bottom:1px solid var(--border-soft);
+    font:inherit; color:inherit; cursor:pointer; border-radius:8px;
+  }
+  .search-result-row:last-child{ border-bottom:none; }
+  .search-result-row:hover{ background:var(--surface-2); }
+  .search-result-cover{
+    width:38px; height:56px; border-radius:5px; flex:none; background:var(--surface-2);
+    display:flex; align-items:center; justify-content:center; overflow:hidden;
+  }
+  .search-result-cover img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .search-result-cover svg{ width:18px; height:18px; color:var(--ink-faint); }
+  .search-result-text{ min-width:0; }
+  .search-result-title{ display:block; font-weight:600; font-size:.87rem; }
+  .search-result-sub{ display:block; font-size:.75rem; color:var(--ink-faint); margin-top:2px; }
+
   .lib-history-row{ display:flex; align-items:flex-start; gap:12px; padding:10px 0; border-bottom:1px solid var(--border-soft); }
   .lib-history-row:last-child{ border-bottom:none; }
   .lib-history-dot{ width:8px; height:8px; border-radius:50%; flex:none; margin-top:6px; }
@@ -2717,6 +2736,13 @@
   var libScanErrorMsg = "";
   var libScanResult = null;       // { matched, code, source, fields } from scanLookup()
   var libScanManualCode = "";
+  /* ---- Title search state (v22, opened from inside the Add item modal alongside Scan barcode) ---- */
+  var libraryShowSearch = false;
+  var libSearchQuery = "";
+  var libSearchStatus = "idle";   // idle | searching | results | empty | error
+  var libSearchResults = [];      // array of { title, subtitle, coverImage, sourceId, fields }
+  var libSearchRunToken = 0;      // invalidates a stale in-flight search superseded by newer typing
+  var libSearchDebounceTimer = null;
   /* Live camera/decoder handles — deliberately NOT app state (never persisted, never touched by
      renderLibrary's normal render-from-state flow): renderViews() does a full innerHTML replace on
      every call, which would tear down a live <video> element, so the camera is only ever driven
@@ -3007,6 +3033,7 @@
   var HEART_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.6-10-9.3C.4 7.6 2.4 4 6 4c2.2 0 3.8 1.3 6 3.8C14.2 5.3 15.8 4 18 4c3.6 0 5.6 3.6 4 7.2-2.5 4.7-10 9.3-10 9.3Z"/></svg>';
   var CAMERA_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.5-2.5h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13.5" r="3.5"/></svg>';
   var BARCODE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5v14M7 5v14M10 5v14M14 5v14M16 5v14M20 5v14"/></svg>';
+  var SEARCH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>';
   var CATEGORY_ICON_SVGS = { book:BOOK_SVG, film:FILM_SVG, tv:TV_SVG, disc:DISC_SVG, mic:MIC_SVG, wineglass:WINEGLASS_SVG, tag:TAG_SVG };
   /* Per-category display metadata: color accent, icon key, default progress type, and the
      wording each status maps to for that category (e.g. books "active" reads as "Reading",
@@ -3100,6 +3127,113 @@
       return { matched:true, code:code, source:provider.source, fields:fields };
     }).catch(function(){ return { matched:false, code:code, source:"barcode", errored:true }; });
   }
+
+  /* Applies a matched lookup/search result's fields onto the currently-open Add/Edit Item form via
+     direct DOM patches (never renderViews() — same reasoning as everywhere else in this modal: it
+     must survive without wiping anything else the user already typed). Shared by both the barcode
+     scan flow and the v22 title-search flow below, since both resolve to the same field shape. */
+  function applyLibraryFieldsToForm(f, catId){
+    f = f || {};
+    var setVal = function(id,val){ var el=document.getElementById(id); if(el && val!=null && val!=="") el.value=val; };
+    setVal("lib-title", f.title); setVal("lib-creator", f.creator); setVal("lib-year", f.year);
+    if(f.publisher) setVal("lib-publisher", f.publisher);
+    if(f.isbn) setVal("lib-isbn", f.isbn);
+    if(typeof f.progressTotal==="number") setVal("lib-total-pages", f.progressTotal);
+    if(typeof f.tracks==="number") setVal("lib-tracks", f.tracks);
+    if(f.physicalFormat) setVal("lib-format", f.physicalFormat);
+    if(f.genre){
+      if(catId==="movies") setVal("lib-genre-movies", f.genre);
+      else if(catId==="tv") setVal("lib-genre-tv", f.genre);
+    }
+    if(typeof f.runtime==="number") setVal("lib-runtime", f.runtime);
+    if(f.coverImage){
+      libraryPendingCoverImage = f.coverImage;
+      var prev = document.getElementById("lib-cover-preview"), ph = document.getElementById("lib-cover-placeholder");
+      if(prev){ prev.src=f.coverImage; prev.style.display="block"; }
+      if(ph) ph.style.display="none";
+    }
+  }
+
+  /* ---- Title search (v22): type a title/name, pick from real candidate results ----
+     Same "free, no API key" constraint as the barcode lookups above. Books and Music reuse their
+     existing barcode sources' own search-by-text endpoints (Open Library and MusicBrainz both
+     support search-by-title, not just search-by-code). Movies and TV have no free source among the
+     barcode providers, so both are wired to Apple's iTunes Search API instead — free, no key/signup,
+     documented at https://performance-partners.apple.com/search-api, rate-limited to roughly 20
+     calls/minute per Apple's own guidance (fine for one person typing). Any category not listed here
+     (Podcasts, Wine, any custom category) has no live search source — same disclosed gap as the
+     barcode scanner's LOOKUP_PROVIDERS, and for the same reason: no solid free public database
+     exists for those categories today. Each provider's search() resolves to an array of
+     { title, subtitle, coverImage, sourceId, fields } — fields is the exact same shape
+     applyLibraryFieldsToForm() already expects from a matched barcode scan. */
+  function searchOpenLibrary(q){
+    return fetchJSON("https://openlibrary.org/search.json?q="+encodeURIComponent(q)+"&limit=8&fields=key,title,author_name,first_publish_year,cover_i,isbn,publisher,number_of_pages_median")
+      .then(function(data){
+        return (data.docs||[]).filter(function(d){ return d.title; }).map(function(d){
+          var authors = (d.author_name||[]).join(", ");
+          var cover = d.cover_i ? ("https://covers.openlibrary.org/b/id/"+d.cover_i+"-M.jpg") : "";
+          return {
+            title: d.title, subtitle: [authors, d.first_publish_year].filter(Boolean).join(" · "), coverImage: cover,
+            sourceId: d.key || "",
+            fields: {
+              title: d.title, creator: authors, year: d.first_publish_year ? String(d.first_publish_year) : "",
+              publisher: (d.publisher||[])[0] || "", isbn: (d.isbn||[])[0] || "",
+              progressTotal: (typeof d.number_of_pages_median==="number") ? d.number_of_pages_median : null,
+              coverImage: cover
+            }
+          };
+        });
+      });
+  }
+  function searchMusicBrainz(q){
+    return fetchJSON("https://musicbrainz.org/ws/2/release/?query="+encodeURIComponent(q)+"&fmt=json&limit=8")
+      .then(function(data){
+        return (data.releases||[]).filter(function(rel){ return rel.title; }).map(function(rel){
+          var artist = (rel["artist-credit"]||[]).map(function(c){ return c.name; }).filter(Boolean).join(", ");
+          var yearMatch = (rel.date||"").match(/\d{4}/);
+          var media = (rel.media||[])[0];
+          var cover = rel.id ? ("https://coverartarchive.org/release/"+rel.id+"/front-250") : "";
+          return {
+            title: rel.title, subtitle: [artist, yearMatch?yearMatch[0]:""].filter(Boolean).join(" · "), coverImage: cover,
+            sourceId: rel.id || "",
+            fields: {
+              title: rel.title, creator: artist, year: yearMatch?yearMatch[0]:"",
+              tracks: (media && typeof media["track-count"]==="number") ? media["track-count"] : null,
+              physicalFormat: (media && media.format) ? media.format : "",
+              coverImage: cover
+            }
+          };
+        });
+      });
+  }
+  function searchITunes(q, mediaType){
+    return fetchJSON("https://itunes.apple.com/search?term="+encodeURIComponent(q)+"&media="+mediaType+"&limit=8")
+      .then(function(data){
+        return (data.results||[]).filter(function(r){ return r.trackName||r.collectionName; }).map(function(r){
+          var name = r.trackName || r.collectionName || "";
+          var yearMatch = (r.releaseDate||"").match(/\d{4}/);
+          var runtimeMin = r.trackTimeMillis ? Math.round(r.trackTimeMillis/60000) : null;
+          var subtitleParts = [r.primaryGenreName, yearMatch?yearMatch[0]:""];
+          if(mediaType==="movie" && runtimeMin) subtitleParts.push(runtimeMin+" min");
+          var cover = r.artworkUrl100 ? r.artworkUrl100.replace("100x100bb","300x300bb") : "";
+          return {
+            title: name, subtitle: subtitleParts.filter(Boolean).join(" · "), coverImage: cover,
+            sourceId: r.trackId ? String(r.trackId) : "",
+            fields: {
+              title: name, creator: r.artistName || "", year: yearMatch?yearMatch[0]:"",
+              genre: r.primaryGenreName || "", runtime: mediaType==="movie" ? runtimeMin : null,
+              coverImage: cover
+            }
+          };
+        });
+      });
+  }
+  var SEARCH_PROVIDERS = {
+    books:  { source:"openlibrary", label:"Open Library", search: searchOpenLibrary },
+    music:  { source:"musicbrainz", label:"MusicBrainz",  search: searchMusicBrainz },
+    movies: { source:"itunes",      label:"iTunes",       search: function(q){ return searchITunes(q,"movie"); } },
+    tv:     { source:"itunes",      label:"iTunes",       search: function(q){ return searchITunes(q,"tvShow"); } }
+  };
 
   /* ---- Barcode scan: camera + decode engine ----
      Driven entirely from wireView (direct DOM patches + explicit renderViews() calls only at real
@@ -3252,6 +3386,8 @@
     if(statusSel) Array.prototype.forEach.call(statusSel.options, function(opt){
       opt.textContent = libraryStatusLabel(newCat, opt.value);
     });
+    var searchBtn = document.getElementById("lib-search-btn");
+    if(searchBtn) searchBtn.style.display = SEARCH_PROVIDERS[newCat] ? "flex" : "none";
   }
   /* ---- Barcode scan: modal lifecycle, deliberately OUTSIDE the normal render pipeline ----
      The Add item modal lives inside RENDERERS[tab]()'s big HTML string, rebuilt from `vals` (a
@@ -3307,19 +3443,7 @@
         var curCat = catRow ? catRow.getAttribute("data-selected") : null;
         var wantCat = LOOKUP_PROVIDERS[curCat] ? curCat : (isbnLikely(r.code) ? "books" : curCat);
         if(wantCat && wantCat!==curCat) switchLibFormCategory(wantCat);
-        var setVal = function(id,val){ var el=document.getElementById(id); if(el && val!=null && val!=="") el.value=val; };
-        setVal("lib-title", f.title); setVal("lib-creator", f.creator); setVal("lib-year", f.year);
-        if(f.publisher) setVal("lib-publisher", f.publisher);
-        if(f.isbn) setVal("lib-isbn", f.isbn);
-        if(typeof f.progressTotal==="number") setVal("lib-total-pages", f.progressTotal);
-        if(typeof f.tracks==="number") setVal("lib-tracks", f.tracks);
-        if(f.physicalFormat) setVal("lib-format", f.physicalFormat);
-        if(f.coverImage){
-          libraryPendingCoverImage = f.coverImage;
-          var prev = document.getElementById("lib-cover-preview"), ph = document.getElementById("lib-cover-placeholder");
-          if(prev){ prev.src=f.coverImage; prev.style.display="block"; }
-          if(ph) ph.style.display="none";
-        }
+        applyLibraryFieldsToForm(f, wantCat);
       } else if(isbnLikely(r.code)){
         var catRow2 = document.getElementById("lib-form-cat-row");
         if(catRow2 && catRow2.getAttribute("data-selected")!=="books") switchLibFormCategory("books");
@@ -3330,6 +3454,145 @@
     });
     if(libraryShowScan && libScanStatus==="idle") startScanCamera();
   }
+
+  /* ---- Title search (v22): modal lifecycle, same "outside the render pipeline" rule as the scan
+     modal above, and for the same reason — it opens over an in-progress Add item form and must
+     never trigger renderViews(). The one extra wrinkle here versus the scan modal: results arrive
+     from a debounced, as-you-type search, so a naive "just call renderSearchModal() again" on every
+     result would rebuild the whole modal — including the text input — and steal focus/cursor
+     position out from under whoever's still typing. So only the initial open/close redraws the full
+     modal; a new batch of results patches just the status line + results list via direct DOM
+     surgery (updateSearchResultsOnly()), leaving the input element itself untouched. */
+  function resetSearchState(){
+    clearTimeout(libSearchDebounceTimer); libSearchDebounceTimer = null;
+    libSearchRunToken++; // invalidate any in-flight search
+    libSearchQuery = ""; libSearchStatus = "idle"; libSearchResults = [];
+  }
+  function searchStatusLine(){
+    if(libSearchStatus==="searching") return "Searching…";
+    if(libSearchStatus==="error") return "Couldn't reach the search source — try again, or enter details by hand.";
+    if(libSearchStatus==="empty") return "No matches for \""+esc(libSearchQuery)+"\". Try a different spelling, or enter details by hand.";
+    return "";
+  }
+  function searchResultRowHTML(r, idx){
+    return '<button type="button" class="search-result-row" data-search-pick="'+idx+'">'+
+      '<span class="search-result-cover">'+(r.coverImage?'<img src="'+esc(r.coverImage)+'" alt="" loading="lazy">':TAG_SVG)+'</span>'+
+      '<span class="search-result-text">'+
+        '<span class="search-result-title">'+esc(r.title)+'</span>'+
+        (r.subtitle?'<span class="search-result-sub">'+esc(r.subtitle)+'</span>':'')+
+      '</span>'+
+    '</button>';
+  }
+  function searchResultsHTML(){
+    return libSearchResults.map(searchResultRowHTML).join("");
+  }
+  function librarySearchModalHTML(){
+    var catRow = document.getElementById("lib-form-cat-row");
+    var catId = catRow ? catRow.getAttribute("data-selected") : "books";
+    var provider = SEARCH_PROVIDERS[catId];
+    var cat = libraryCategoryById(catId);
+    var catLabel = cat ? cat.name : capitalize(catId);
+    var body;
+    if(!provider){
+      body = '<p class="plan-empty">No search source for '+esc(catLabel)+' yet — you can still fill this in by hand.</p>';
+    } else {
+      body = '<input type="text" id="search-query-input" placeholder="Title, artist, or name…" value="'+esc(libSearchQuery)+'" autocomplete="off">'+
+        '<div class="scan-status-line" id="search-status-text">'+searchStatusLine()+'</div>'+
+        '<div class="search-result-list" id="search-result-list">'+searchResultsHTML()+'</div>';
+    }
+    return '<div class="modal-backdrop" data-search-modal-backdrop>'+
+      '<div class="modal-card">'+
+        '<h2>Search '+esc(catLabel)+'</h2>'+
+        body+
+        '<div class="modal-actions"><button type="button" class="btn-ghost" data-search-cancel>Cancel</button></div>'+
+      '</div>'+
+    '</div>';
+  }
+  function closeSearchModal(){
+    libraryShowSearch = false;
+    resetSearchState();
+    renderSearchModal();
+  }
+  function runLibrarySearch(catId, q){
+    var provider = SEARCH_PROVIDERS[catId];
+    if(!provider) return;
+    var myToken = ++libSearchRunToken;
+    libSearchStatus = "searching";
+    updateSearchResultsOnly();
+    provider.search(q).then(function(results){
+      if(myToken!==libSearchRunToken) return; // superseded by newer typing — drop this stale result
+      libSearchResults = results;
+      libSearchStatus = results.length ? "results" : "empty";
+      updateSearchResultsOnly();
+    }).catch(function(){
+      if(myToken!==libSearchRunToken) return;
+      libSearchResults = [];
+      libSearchStatus = "error";
+      updateSearchResultsOnly();
+    });
+  }
+  function wireSearchResultRows(container){
+    Array.prototype.forEach.call(container.querySelectorAll("[data-search-pick]"), function(btn){
+      btn.addEventListener("click", function(){
+        var idx = Number(btn.getAttribute("data-search-pick"));
+        var r = libSearchResults[idx];
+        if(!r) return;
+        var catRow = document.getElementById("lib-form-cat-row");
+        var catId = catRow ? catRow.getAttribute("data-selected") : null;
+        applyLibraryFieldsToForm(r.fields, catId);
+        var provider = SEARCH_PROVIDERS[catId];
+        libraryPendingScanSource = provider ? provider.source : null;
+        libraryPendingScanCode = r.sourceId || "";
+        closeSearchModal();
+      });
+    });
+  }
+  function updateSearchResultsOnly(){
+    var statusEl = document.getElementById("search-status-text");
+    if(statusEl) statusEl.textContent = searchStatusLine();
+    var listEl = document.getElementById("search-result-list");
+    if(listEl){
+      listEl.innerHTML = searchResultsHTML();
+      wireSearchResultRows(listEl);
+    }
+  }
+  function renderSearchModal(){
+    var existing = document.querySelector("[data-search-modal-backdrop]");
+    if(existing) existing.remove();
+    if(!libraryShowSearch) return;
+    document.body.insertAdjacentHTML("beforeend", librarySearchModalHTML());
+    wireSearchModal();
+  }
+  function wireSearchModal(){
+    var backdrop = document.querySelector("[data-search-modal-backdrop]");
+    if(!backdrop) return;
+    backdrop.addEventListener("click", function(ev){ if(ev.target===backdrop) closeSearchModal(); });
+    var cancelBtn = backdrop.querySelector("[data-search-cancel]");
+    if(cancelBtn) cancelBtn.addEventListener("click", closeSearchModal);
+    var input = backdrop.querySelector("#search-query-input");
+    if(input){
+      var catRow = document.getElementById("lib-form-cat-row");
+      var catId = catRow ? catRow.getAttribute("data-selected") : null;
+      input.addEventListener("input", function(){
+        // Live-synced on every keystroke, same lesson as the barcode manual-entry field — nothing
+        // here re-renders the input itself, but keeping libSearchQuery current avoids the same class
+        // of bug if anything else ever reads it before a debounced search fires.
+        libSearchQuery = input.value;
+        clearTimeout(libSearchDebounceTimer);
+        var q = libSearchQuery.trim();
+        if(!q){
+          libSearchRunToken++; // drop any in-flight search — an empty box shouldn't show stale results
+          libSearchStatus = "idle"; libSearchResults = [];
+          updateSearchResultsOnly();
+          return;
+        }
+        libSearchDebounceTimer = setTimeout(function(){ runLibrarySearch(catId, q); }, 400);
+      });
+      input.focus();
+    }
+    wireSearchResultRows(backdrop);
+  }
+
   /* All activity for one item, oldest first, kept for pace/history calculations. */
   function libraryItemProgressEntries(itemId){
     return state.library.activity.filter(function(a){ return a.itemId===itemId && a.progressAfter!=null; })
@@ -5287,7 +5550,10 @@
         '<h2>'+(editing?"Edit item":"Add item")+'</h2>'+
         '<form class="stack" id="lib-item-form">'+
           (editing?'':'<label class="f">Category<div class="swatch-row" style="flex-wrap:wrap" id="lib-form-cat-row" data-selected="'+catId+'">'+catPills+'</div></label>')+
-          (editing?'':'<button type="button" class="btn" id="lib-scan-btn" style="align-self:flex-start;display:flex;align-items:center;gap:6px">'+BARCODE_SVG+' Scan barcode</button>')+
+          (editing?'':'<div style="display:flex;gap:8px;flex-wrap:wrap">'+
+            '<button type="button" class="btn" id="lib-scan-btn" style="display:flex;align-items:center;gap:6px">'+BARCODE_SVG+' Scan barcode</button>'+
+            '<button type="button" class="btn" id="lib-search-btn" style="display:'+(SEARCH_PROVIDERS[catId]?"flex":"none")+';align-items:center;gap:6px">'+SEARCH_SVG+' Search title</button>'+
+          '</div>')+
           '<div style="display:flex;gap:14px;align-items:flex-start">'+
             '<label class="cover-dropzone" id="lib-cover-drop">'+
               '<img id="lib-cover-preview" src="'+esc(vals.coverImage||"")+'" alt="" style="display:'+(vals.coverImage?"block":"none")+'">'+
@@ -8939,6 +9205,7 @@
         libraryShowAddCategory=false; libraryShowLogActivity=false; libraryPendingCoverImage=null;
         libraryPendingScanSource=null; libraryPendingScanCode=null;
         libraryShowScan=false; resetScanState(); renderScanModal(); // removes the body-level overlay, if any
+        libraryShowSearch=false; resetSearchState(); renderSearchModal(); // ditto for the search overlay
       }
       function num(id){ var el=document.getElementById(id); return (el && el.value!=="") ? Number(el.value) : null; }
       function txt(id){ var el=document.getElementById(id); return el ? el.value.trim() : ""; }
@@ -9042,6 +9309,7 @@
           libraryAddItemCategoryId = libraryPage==="category" ? libraryActiveCategoryId : null;
           libraryPendingCoverImage=null;
           libraryPendingScanSource=null; libraryPendingScanCode=null;
+          libraryShowSearch=false; resetSearchState();
           libraryShowAddItem=true; renderViews();
         });
       });
@@ -9050,6 +9318,7 @@
           libraryEditingItemId=btn.getAttribute("data-lib-edit-item");
           libraryPendingCoverImage=null;
           libraryPendingScanSource=null; libraryPendingScanCode=null;
+          libraryShowSearch=false; resetSearchState();
           libraryShowAddItem=true; renderViews();
         });
       });
@@ -9063,6 +9332,13 @@
         resetScanState();
         libraryShowScan=true;
         renderScanModal();
+      });
+      /* ---- Search title: opens the body-level overlay (see renderSearchModal()) ---- */
+      var searchBtn = document.getElementById("lib-search-btn");
+      if(searchBtn) searchBtn.addEventListener("click", function(){
+        resetSearchState();
+        libraryShowSearch=true;
+        renderSearchModal();
       });
       var libCoverInput = document.getElementById("lib-cover-input");
       if(libCoverInput) libCoverInput.addEventListener("change", function(){
