@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="en">
 <head>
@@ -1214,6 +1215,13 @@
   .home-check-label{ font-size:.89rem; }
   .home-check-row.done .home-check-label{ opacity:.7; text-decoration:line-through; }
   .home-checklist-empty{ font-size:.85rem; color:rgba(255,255,255,.75); margin-top:14px; }
+  .htm-head{ display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+  .htm-edit-btn{
+    background:rgba(255,255,255,.15); border:none; color:#fff; width:26px; height:26px; border-radius:7px;
+    display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none;
+  }
+  .htm-edit-btn svg{ width:14px; height:14px; }
+  .htm-edit-btn:hover{ background:rgba(255,255,255,.28); }
   .home-today-metrics{
     display:grid; grid-template-columns:1fr 1fr;
     border-top:1px solid rgba(255,255,255,.22); border-left:1px solid rgba(255,255,255,.22);
@@ -1533,7 +1541,8 @@
         metrics: bodyBuiltinMetrics(),
         measurements: [],
         unitSystem: "metric"
-      }
+      },
+      homeMetricPrefs: ["running","training","reading","spending"]
     };
   }
 
@@ -1632,6 +1641,7 @@
         if(!Array.isArray(state.body.measurements)) state.body.measurements = [];
         if(state.body.unitSystem!=="metric" && state.body.unitSystem!=="imperial") state.body.unitSystem = "metric";
         if(typeof state.habitsNote !== "string") state.habitsNote = "";
+        state.homeMetricPrefs = normalizeHomeMetricPrefs(state.homeMetricPrefs);
         if(!state.budgets || typeof state.budgets!=="object") state.budgets = {};
         if(!Array.isArray(state.timeBlocks)) state.timeBlocks = [];
         if(!Array.isArray(state.dailyPlan)) state.dailyPlan = [];
@@ -3492,7 +3502,81 @@
     state.challenges.activities.forEach(function(a){ if(a.date===today) trainMin += Number(a.durationMinutes||0); });
     var pages = pagesReadOnDate(today);
     var spent = state.expenses.filter(function(e){ return e.date===today; }).reduce(function(sum,e){ return sum+Number(e.amount||0); },0);
-    return { runKm:runKm, trainMin:trainMin, pages:pages, spent:spent };
+    var studyMin = 0;
+    state.study.sessions.forEach(function(ss){ if(ss.date===today) studyMin += Number(ss.minutes||0); });
+    var activeHb = activeHabits();
+    var habitsDone = activeHb.filter(function(h){ return h.logs[today]; }).length;
+    return { runKm:runKm, trainMin:trainMin, pages:pages, spent:spent, studyMin:studyMin, habitsDone:habitsDone, habitsActive:activeHb.length };
+  }
+
+  /* ============ Home "Today" stats: customizable metric picker (v21) ============
+     A fixed set of registry entries (key/label/how to read a value out of getTodayMetrics()'s
+     result). state.homeMetricPrefs is just an ordered array of keys — what's selected and in what
+     order. Anything not in that array is simply available to add back via the customize modal. */
+  var HOME_METRIC_DEFAULT_KEYS = ["running","training","reading","spending"];
+  function homeMetricRegistry(){
+    return [
+      { key:"running",  label:"Running",  format:function(tm){ return tm.runKm>0 ? (Math.round(tm.runKm*10)/10)+" km" : "—"; } },
+      { key:"training", label:"Training", format:function(tm){ return tm.trainMin>0 ? fmtMinutes(tm.trainMin) : "—"; } },
+      { key:"reading",  label:"Read",     format:function(tm){ return tm.pages>0 ? tm.pages+" p" : "—"; } },
+      { key:"study",    label:"Study",    format:function(tm){ return tm.studyMin>0 ? fmtMinutes(tm.studyMin) : "—"; } },
+      { key:"spending", label:"Spent",    format:function(tm){ return tm.spent>0 ? money(tm.spent) : "—"; } },
+      { key:"habits",   label:"Habits",   format:function(tm){ return tm.habitsActive>0 ? (tm.habitsDone+" / "+tm.habitsActive) : "—"; } }
+    ];
+  }
+  function homeMetricByKey(key){
+    var hit = homeMetricRegistry().filter(function(m){ return m.key===key; });
+    return hit[0] || null;
+  }
+  function normalizeHomeMetricPrefs(arr){
+    var validKeys = homeMetricRegistry().map(function(m){ return m.key; });
+    var out = (Array.isArray(arr) ? arr : []).filter(function(k){ return validKeys.indexOf(k)>-1; });
+    out = out.filter(function(k, i){ return out.indexOf(k)===i; }); // dedupe, keep first occurrence
+    if(!out.length) out = HOME_METRIC_DEFAULT_KEYS.slice();
+    return out;
+  }
+  function moveHomeMetric(key, dir){
+    var arr = state.homeMetricPrefs;
+    var i = arr.indexOf(key);
+    if(i<0) return;
+    var j = dir==="up" ? i-1 : i+1;
+    if(j<0 || j>=arr.length) return;
+    var tmp = arr[i]; arr[i] = arr[j]; arr[j] = tmp;
+  }
+
+  function homeMetricsModalHTML(){
+    var registry = homeMetricRegistry();
+    var selected = state.homeMetricPrefs;
+    var selectedSet = {};
+    selected.forEach(function(k){ selectedSet[k] = true; });
+    var available = registry.filter(function(m){ return !selectedSet[m.key]; });
+
+    var rows = selected.map(function(key, idx){
+      var m = homeMetricByKey(key);
+      if(!m) return "";
+      return '<div class="chp-row" style="justify-content:space-between" data-hm-key="'+key+'">'+
+        '<span>'+esc(m.label)+'</span>'+
+        '<span style="display:flex;gap:2px;align-items:center">'+
+          (idx>0 ? '<button type="button" class="chp-icon-btn" data-hm-move="'+key+':up" title="Move up">↑</button>' : '')+
+          (idx<selected.length-1 ? '<button type="button" class="chp-icon-btn" data-hm-move="'+key+':down" title="Move down">↓</button>' : '')+
+          '<button type="button" class="chp-icon-btn" data-hm-remove="'+key+'" title="Remove" style="color:var(--bad)">✕</button>'+
+        '</span>'+
+      '</div>';
+    }).join("");
+
+    return '<div class="modal-backdrop" data-modal-backdrop>'+
+      '<div class="modal-card">'+
+        '<h2>Customize Today</h2>'+
+        '<p class="hint" style="margin:-6px 0 14px">Pick what shows in your Today stats, and use the arrows to set the order.</p>'+
+        '<div class="hm-selected-list">'+ (rows || '<p class="plan-empty">Nothing selected — add something below.</p>') +'</div>'+
+        (available.length ? '<div style="margin-top:16px"><div class="hint" style="margin-bottom:8px">Add more</div><div class="chip-row">'+
+          available.map(function(m){ return '<button type="button" class="chip" data-hm-add="'+m.key+'">+ '+esc(m.label)+'</button>'; }).join("")+
+        '</div></div>' : '')+
+        '<div class="modal-actions">'+
+          '<button type="button" class="btn btn-primary" data-modal-cancel>Done</button>'+
+        '</div>'+
+      '</div>'+
+    '</div>';
   }
 
   function homeWeeklyMetrics(){
@@ -3671,11 +3755,19 @@
       html += '<p class="home-checklist-empty">No habits yet — add one on the Habits page.</p>';
     }
     html += '</div>'+
-      '<div class="home-today-metrics">'+
-        '<div class="htm-cell"><div class="htm-val">'+(tm.runKm>0?(Math.round(tm.runKm*10)/10)+" km":"—")+'</div><div class="htm-lbl">Running</div></div>'+
-        '<div class="htm-cell"><div class="htm-val">'+(tm.trainMin>0?fmtMinutes(tm.trainMin):"—")+'</div><div class="htm-lbl">Training</div></div>'+
-        '<div class="htm-cell"><div class="htm-val">'+(tm.pages>0?tm.pages+" p":"—")+'</div><div class="htm-lbl">Read</div></div>'+
-        '<div class="htm-cell"><div class="htm-val">'+(tm.spent>0?money(tm.spent):"—")+'</div><div class="htm-lbl">Spent</div></div>'+
+      '<div>'+
+        '<div class="htm-head"><span class="hth-label">TODAY\'S STATS</span>'+
+          '<button type="button" class="htm-edit-btn" data-home-customize title="Customize">'+
+            '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>'+
+          '</button>'+
+        '</div>'+
+        (state.homeMetricPrefs.length ? '<div class="home-today-metrics">'+
+          state.homeMetricPrefs.map(function(key){
+            var m = homeMetricByKey(key);
+            if(!m) return "";
+            return '<div class="htm-cell"><div class="htm-val">'+m.format(tm)+'</div><div class="htm-lbl">'+esc(m.label)+'</div></div>';
+          }).join("") +
+        '</div>' : '<p class="hth-sub" style="margin-top:10px">Nothing selected — tap the pencil to add stats.</p>')+
       '</div>';
     var planC = todayPlanCompletion(today);
     var planPct = planC.total ? Math.round(planC.done/planC.total*100) : 0;
@@ -3759,6 +3851,8 @@
 
     var q = homeDailyQuote();
     html += '<div class="home-tagline">'+LEAF_SVG+'<div class="home-tagline-body"><div class="home-tagline-head">'+esc(q.h)+'</div><p class="home-tagline-sub">'+esc(q.s)+'</p></div></div>';
+
+    if(homeMetricsEditorOpen) html += homeMetricsModalHTML();
 
     return html;
   }
@@ -4118,6 +4212,7 @@
   var habitsHeatmapMonth = null; // {y,m}, lazily set to current month
   var showAddHabitForm = false;
   var editingHabitId = null;
+  var homeMetricsEditorOpen = false; // whether the "Customize Today" modal is open
   var openHabitMenu = null;
   var showArchivedHabits = false;
 
@@ -8579,6 +8674,39 @@
           goToTab("calendar");
         });
       });
+
+      var homeCustomizeBtn = document.querySelector("[data-home-customize]");
+      if(homeCustomizeBtn) homeCustomizeBtn.addEventListener("click", function(){
+        homeMetricsEditorOpen = true;
+        renderViews();
+      });
+      if(homeMetricsEditorOpen){
+        var hmCancel = document.querySelector("[data-modal-cancel]");
+        if(hmCancel) hmCancel.addEventListener("click", function(){ homeMetricsEditorOpen = false; renderViews(); });
+        var hmBackdrop = document.querySelector("[data-modal-backdrop]");
+        if(hmBackdrop) hmBackdrop.addEventListener("click", function(ev){ if(ev.target===hmBackdrop){ homeMetricsEditorOpen = false; renderViews(); } });
+        Array.prototype.forEach.call(document.querySelectorAll("[data-hm-add]"), function(btn){
+          btn.addEventListener("click", function(){
+            var key = btn.getAttribute("data-hm-add");
+            if(state.homeMetricPrefs.indexOf(key)<0) state.homeMetricPrefs.push(key);
+            save(); renderViews();
+          });
+        });
+        Array.prototype.forEach.call(document.querySelectorAll("[data-hm-remove]"), function(btn){
+          btn.addEventListener("click", function(){
+            var key = btn.getAttribute("data-hm-remove");
+            state.homeMetricPrefs = state.homeMetricPrefs.filter(function(k){ return k!==key; });
+            save(); renderViews();
+          });
+        });
+        Array.prototype.forEach.call(document.querySelectorAll("[data-hm-move]"), function(btn){
+          btn.addEventListener("click", function(){
+            var parts = btn.getAttribute("data-hm-move").split(":");
+            moveHomeMetric(parts[0], parts[1]);
+            save(); renderViews();
+          });
+        });
+      }
     }
 
     if(tab==="habits"){
