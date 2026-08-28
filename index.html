@@ -1462,6 +1462,30 @@
   .migration-offer{ position:fixed; inset:0; background:rgba(36,37,31,.45); z-index:400; display:flex; align-items:center; justify-content:center; padding:24px; }
   .migration-offer[hidden]{ display:none; }
   .migration-offer .modal-card{ max-width:420px; }
+
+  /* ============ TRAVEL (v23) ============ */
+  .hint{ font-size:.78rem; color:var(--ink-faint); }
+  .trv-mini-stats{ display:flex; gap:22px; flex-wrap:wrap; }
+  .trv-mini-num{ font-family:'IBM Plex Mono',monospace; font-size:1.3rem; font-weight:600; color:var(--ink); line-height:1; }
+  .trv-mini-label{ font-size:.72rem; color:var(--ink-faint); margin-top:4px; }
+
+  .trv-map-wrap{ background:var(--surface-2); border-radius:14px; padding:10px; overflow:hidden; }
+  .trv-map-svg{ width:100%; height:auto; display:block; }
+  .trv-map-land{ fill:var(--border-soft); stroke:var(--border); stroke-width:1; }
+  .trv-map-marker{ cursor:pointer; }
+  .trv-map-marker circle{ transition:r .15s ease; }
+  .trv-map-marker:hover circle{ r:9; }
+  .trv-map-legend{ display:flex; gap:16px; flex-wrap:wrap; margin-top:12px; }
+  .trv-legend-item{ display:inline-flex; align-items:center; gap:6px; font-size:.76rem; color:var(--ink-soft); }
+  .trv-legend-dot{ width:9px; height:9px; border-radius:50%; display:inline-block; }
+  .trv-route-svg{ width:100%; height:auto; display:block; }
+
+  .trv-photo-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(0,120px)); gap:10px; }
+  .trv-photo-cell{ position:relative; aspect-ratio:1/1; border-radius:10px; overflow:hidden; background:var(--surface-2); }
+  .trv-photo-cell img{ width:100%; height:100%; object-fit:cover; display:block; }
+  .trv-photo-del{ position:absolute; top:4px; right:4px; width:22px; height:22px; border-radius:50%; border:none; background:rgba(10,9,6,.6); color:#fff; font-size:.9rem; line-height:1; cursor:pointer; }
+
+  .note-textarea{ width:100%; font-family:inherit; font-size:.88rem; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--ink); resize:vertical; }
 </style>
 </head>
 <body>
@@ -1560,7 +1584,8 @@
         measurements: [],
         unitSystem: "metric"
       },
-      homeMetricPrefs: ["running","training","reading","spending"]
+      homeMetricPrefs: ["running","training","reading","spending"],
+      travel: { trips: [], places: [], tripPlaces: [], itinerary: [], photos: [] }
     };
   }
 
@@ -1616,6 +1641,242 @@
     };
   }
 
+  /* ============ TRAVEL: reference tables + data model (v23) ============
+     Deliberately flattened, same principle as Library v11 (see docs): Trip/Place/TripPlace/
+     ItineraryItem/TravelPhoto instead of the spec's fuller relational model. A Place is one
+     record referenced everywhere (a trip's Places tab, the World Map, the Places list, Reviews,
+     Photos, Recent activity) via the TripPlace join table — never duplicated. Reviews live
+     directly on the Place record rather than a separate PlaceReview table (one review per place,
+     edited in place). Daily travel-journal text reuses the existing state.dayNotes (already
+     shared with Calendar) rather than a new per-trip notes table — only a trip-level free-text
+     "notes" field is new. Trip status is computed from dates, not stored (see tripStatus()),
+     so it can't drift out of sync with them; "archived" is the one manual override. */
+
+  /* Place categories use the same colored-initial badge as Expenses' catIconHTML() rather than a
+     bespoke pictogram per category — keeps this in the app's plain/editorial visual language
+     instead of adding a pile of new icons (the spec explicitly rules out anything gamified or
+     iconography-heavy). */
+  var PLACE_CATEGORIES = [
+    { id:"restaurant",   label:"Restaurant",   color:"var(--ember)" },
+    { id:"hotel",        label:"Hotel",        color:"var(--steel)" },
+    { id:"museum",       label:"Museum",       color:"var(--home-purple)" },
+    { id:"monument",     label:"Monument",     color:"var(--gold)" },
+    { id:"beach",        label:"Beach",        color:"var(--teal)" },
+    { id:"hike",         label:"Hike",         color:"var(--good)" },
+    { id:"cafe",         label:"Café",         color:"var(--mustard)" },
+    { id:"bar",          label:"Bar",          color:"var(--plum)" },
+    { id:"shop",         label:"Shop",         color:"var(--rose)" },
+    { id:"neighborhood", label:"Neighborhood", color:"var(--home-blue)" },
+    { id:"park",         label:"Park",         color:"var(--good)" },
+    { id:"viewpoint",    label:"Viewpoint",    color:"var(--teal)" },
+    { id:"temple",       label:"Temple",       color:"var(--gold)" },
+    { id:"church",       label:"Church",       color:"var(--steel)" },
+    { id:"architecture", label:"Architecture", color:"var(--home-purple)" },
+    { id:"other",        label:"Other",        color:"var(--ink-faint)" }
+  ];
+  function placeCategoryById(id){
+    var found = PLACE_CATEGORIES.filter(function(c){ return c.id===id; })[0];
+    return found ? found.id : "other";
+  }
+  function placeCategoryMeta(id){ return PLACE_CATEGORIES.filter(function(c){ return c.id===id; })[0] || PLACE_CATEGORIES[PLACE_CATEGORIES.length-1]; }
+
+  var ITINERARY_TYPES = [
+    { id:"flight",      label:"Flight" },
+    { id:"train",       label:"Train" },
+    { id:"car",         label:"Car" },
+    { id:"taxi",        label:"Taxi" },
+    { id:"transport",   label:"Transport" },
+    { id:"hotel-stay",  label:"Hotel stay" },
+    { id:"restaurant",  label:"Restaurant" },
+    { id:"cafe",        label:"Café" },
+    { id:"activity",    label:"Activity" },
+    { id:"museum",      label:"Museum" },
+    { id:"sightseeing", label:"Sightseeing" },
+    { id:"beach",       label:"Beach" },
+    { id:"hike",        label:"Hike" },
+    { id:"shopping",    label:"Shopping" },
+    { id:"reservation", label:"Reservation" },
+    { id:"free-time",   label:"Free time" },
+    { id:"other",       label:"Other" }
+  ];
+  function itineraryTypeLabel(id){ var t=ITINERARY_TYPES.filter(function(x){ return x.id===id; })[0]; return t?t.label:"Other"; }
+
+  var TRIP_STATUS_META = {
+    planning:  { label:"Planning",  color:"var(--steel)" },
+    upcoming:  { label:"Upcoming",  color:"var(--home-blue)" },
+    ongoing:   { label:"Ongoing",   color:"var(--good)" },
+    completed: { label:"Completed", color:"var(--ink-faint)" },
+    archived:  { label:"Archived",  color:"var(--ink-faint)" }
+  };
+  function tripStatus(t){
+    if(t.archived) return "archived";
+    var today = todayISO();
+    if(!t.startDate) return "planning";
+    if(t.endDate && t.endDate<today) return "completed";
+    if(t.startDate<=today && (!t.endDate || t.endDate>=today)) return "ongoing";
+    if(t.startDate>today) return "upcoming";
+    return "planning";
+  }
+
+  /* Static country-centroid table for World Map plotting — a disclosed approximation (country
+     center, not a real city/place location), not a live geocoding API: this app has no mapping
+     API key, and the spec explicitly forbids faking one. ~80 countries, [lat, lng, display name],
+     enough coverage for a personal travel log; unmapped countries just don't plot a dot. */
+  var COUNTRY_CENTROIDS = {
+    AF:[33.9,67.7,"Afghanistan"], AL:[41.2,20.2,"Albania"], DZ:[28.0,1.7,"Algeria"], AR:[-38.4,-63.6,"Argentina"],
+    AM:[40.1,45.0,"Armenia"], AU:[-25.3,133.8,"Australia"], AT:[47.5,14.6,"Austria"], AZ:[40.1,47.6,"Azerbaijan"],
+    BE:[50.5,4.5,"Belgium"], BZ:[17.2,-88.5,"Belize"], BO:[-16.3,-63.6,"Bolivia"], BA:[43.9,17.7,"Bosnia and Herzegovina"],
+    BR:[-14.2,-51.9,"Brazil"], BG:[42.7,25.5,"Bulgaria"], KH:[12.6,105.0,"Cambodia"], CA:[56.1,-106.3,"Canada"],
+    CL:[-35.7,-71.5,"Chile"], CN:[35.9,104.2,"China"], CO:[4.6,-74.3,"Colombia"], CR:[9.7,-83.8,"Costa Rica"],
+    HR:[45.1,15.2,"Croatia"], CU:[21.5,-77.8,"Cuba"], CY:[35.1,33.4,"Cyprus"], CZ:[49.8,15.5,"Czechia"],
+    DK:[56.3,9.5,"Denmark"], DO:[18.7,-70.2,"Dominican Republic"], EC:[-1.8,-78.2,"Ecuador"], EG:[26.8,30.8,"Egypt"],
+    EE:[58.6,25.0,"Estonia"], ET:[9.1,40.5,"Ethiopia"], FI:[61.9,25.7,"Finland"], FR:[46.6,2.2,"France"],
+    GE:[42.3,43.4,"Georgia"], DE:[51.2,10.5,"Germany"], GH:[7.9,-1.0,"Ghana"], GR:[39.1,21.8,"Greece"],
+    GT:[15.8,-90.2,"Guatemala"], HN:[15.2,-86.2,"Honduras"], HK:[22.3,114.2,"Hong Kong"], HU:[47.2,19.5,"Hungary"],
+    IS:[64.9,-19.0,"Iceland"], IN:[20.6,78.9,"India"], ID:[-0.8,113.9,"Indonesia"], IE:[53.4,-8.2,"Ireland"],
+    IL:[31.0,34.9,"Israel"], IT:[41.9,12.6,"Italy"], JM:[18.1,-77.3,"Jamaica"], JP:[36.2,138.3,"Japan"],
+    JO:[30.6,36.2,"Jordan"], KE:[-0.0,37.9,"Kenya"], KR:[35.9,127.8,"South Korea"], LA:[19.9,102.5,"Laos"],
+    LV:[56.9,24.6,"Latvia"], LB:[33.9,35.9,"Lebanon"], LT:[55.2,23.9,"Lithuania"], LU:[49.8,6.1,"Luxembourg"],
+    MY:[4.2,101.9,"Malaysia"], MT:[35.9,14.4,"Malta"], MX:[23.6,-102.5,"Mexico"], MA:[31.8,-7.1,"Morocco"],
+    NP:[28.4,84.1,"Nepal"], NL:[52.1,5.3,"Netherlands"], NZ:[-40.9,174.9,"New Zealand"], NI:[12.9,-85.2,"Nicaragua"],
+    NO:[60.5,8.5,"Norway"], OM:[21.5,55.9,"Oman"], PA:[8.5,-80.8,"Panama"], PY:[-23.4,-58.4,"Paraguay"],
+    PE:[-9.2,-75.0,"Peru"], PH:[12.9,121.8,"Philippines"], PL:[51.9,19.1,"Poland"], PT:[39.4,-8.2,"Portugal"],
+    QA:[25.4,51.2,"Qatar"], RO:[45.9,25.0,"Romania"], RU:[61.5,105.3,"Russia"], RW:[-1.9,29.9,"Rwanda"],
+    SA:[23.9,45.1,"Saudi Arabia"], RS:[44.0,21.0,"Serbia"], SG:[1.35,103.8,"Singapore"], SK:[48.7,19.7,"Slovakia"],
+    SI:[46.2,15.0,"Slovenia"], ZA:[-30.6,22.9,"South Africa"], ES:[40.5,-3.7,"Spain"], LK:[7.9,80.8,"Sri Lanka"],
+    SE:[60.1,18.6,"Sweden"], CH:[46.8,8.2,"Switzerland"], TW:[23.7,121.0,"Taiwan"], TZ:[-6.4,34.9,"Tanzania"],
+    TH:[15.9,101.0,"Thailand"], TN:[33.9,9.5,"Tunisia"], TR:[38.9,35.2,"Turkey"], UA:[48.4,31.2,"Ukraine"],
+    AE:[23.4,53.8,"United Arab Emirates"], GB:[55.4,-3.4,"United Kingdom"], US:[37.1,-95.7,"United States"],
+    UY:[-32.5,-55.8,"Uruguay"], VE:[6.4,-66.6,"Venezuela"], VN:[14.1,108.3,"Vietnam"], ZM:[-13.1,27.8,"Zambia"],
+    ZW:[-19.0,29.2,"Zimbabwe"]
+  };
+  function countryName(code){ var c=COUNTRY_CENTROIDS[code]; return c?c[2]:(code||""); }
+  function countryCentroid(code){ var c=COUNTRY_CENTROIDS[code]; return c ? { lat:c[0], lng:c[1] } : null; }
+
+  function normalizeTrip(t, idx){
+    return {
+      id: t.id || uid(),
+      name: t.name || "",
+      countryCode: t.countryCode || "",
+      city: t.city || "",
+      startDate: t.startDate || "",
+      endDate: t.endDate || "",
+      archived: !!t.archived,
+      companions: t.companions || "",
+      budget: (typeof t.budget==="number") ? t.budget : null,
+      calendarLinked: t.calendarLinked!==false,
+      coverImage: t.coverImage || null,
+      notes: t.notes || "",
+      color: t.color || "var(--teal)",
+      order: (typeof t.order==="number") ? t.order : idx,
+      createdAt: t.createdAt || todayISO(),
+      updatedAt: t.updatedAt || t.createdAt || todayISO()
+    };
+  }
+  function normalizePlace(p, idx){
+    var cc = (p.countryCode||"").toUpperCase();
+    var centroid = COUNTRY_CENTROIDS[cc];
+    return {
+      id: p.id || uid(),
+      name: p.name || "",
+      category: placeCategoryById(p.category),
+      countryCode: cc,
+      city: p.city || "",
+      address: p.address || "",
+      lat: centroid ? centroid[0] : null,
+      lng: centroid ? centroid[1] : null,
+      status: ["saved","planned","visited"].indexOf(p.status)>-1 ? p.status : "saved",
+      favorite: !!p.favorite,
+      rating: (typeof p.rating==="number") ? p.rating : null,
+      reviewText: p.reviewText || "",
+      reviewDate: p.reviewDate || "",
+      tags: Array.isArray(p.tags) ? p.tags : [],
+      note: p.note || "",
+      coverImage: p.coverImage || null,
+      order: (typeof p.order==="number") ? p.order : idx,
+      createdAt: p.createdAt || todayISO(),
+      updatedAt: p.updatedAt || p.createdAt || todayISO()
+    };
+  }
+  function normalizeTripPlace(tp){
+    return {
+      id: tp.id || uid(),
+      tripId: tp.tripId || "",
+      placeId: tp.placeId || "",
+      dayIndex: (typeof tp.dayIndex==="number") ? tp.dayIndex : null,
+      order: (typeof tp.order==="number") ? tp.order : 0,
+      createdAt: tp.createdAt || todayISO()
+    };
+  }
+  function normalizeItineraryItem(it, idx){
+    return {
+      id: it.id || uid(),
+      tripId: it.tripId || "",
+      dayIndex: (typeof it.dayIndex==="number") ? it.dayIndex : 0,
+      order: (typeof it.order==="number") ? it.order : idx,
+      type: ITINERARY_TYPES.some(function(x){ return x.id===it.type; }) ? it.type : "other",
+      title: it.title || "",
+      time: it.time || "",
+      endTime: it.endTime || "",
+      placeId: it.placeId || null,
+      notes: it.notes || "",
+      cost: (typeof it.cost==="number") ? it.cost : null,
+      calendarEventId: it.calendarEventId || null, // reserved; Calendar reads itinerary directly rather than duplicating into state.timeBlocks
+      createdAt: it.createdAt || todayISO()
+    };
+  }
+  function normalizeTravelPhoto(ph){
+    return {
+      id: ph.id || uid(),
+      tripId: ph.tripId || "",
+      placeId: ph.placeId || null,
+      dataUrl: ph.dataUrl || "",
+      caption: ph.caption || "",
+      date: ph.date || todayISO(),
+      createdAt: ph.createdAt || todayISO()
+    };
+  }
+
+  /* ---- Travel lookups, shared by every Travel page/integration ---- */
+  function tripById(id){ return state.travel.trips.filter(function(t){ return t.id===id; })[0] || null; }
+  function placeById(id){ return state.travel.places.filter(function(p){ return p.id===id; })[0] || null; }
+  function tripPlacesForTrip(tripId){ return state.travel.tripPlaces.filter(function(tp){ return tp.tripId===tripId; }); }
+  function placesForTrip(tripId){
+    return tripPlacesForTrip(tripId)
+      .slice().sort(function(a,b){ return (a.dayIndex==null?999:a.dayIndex)-(b.dayIndex==null?999:b.dayIndex) || a.order-b.order; })
+      .map(function(tp){ return placeById(tp.placeId); }).filter(Boolean);
+  }
+  function tripsForPlace(placeId){
+    var tripIds = state.travel.tripPlaces.filter(function(tp){ return tp.placeId===placeId; }).map(function(tp){ return tp.tripId; });
+    return state.travel.trips.filter(function(t){ return tripIds.indexOf(t.id)>-1; });
+  }
+  function tripPlaceFor(tripId, placeId){ return state.travel.tripPlaces.filter(function(tp){ return tp.tripId===tripId && tp.placeId===placeId; })[0] || null; }
+  function itineraryForTrip(tripId){ return state.travel.itinerary.filter(function(it){ return it.tripId===tripId; }).slice().sort(function(a,b){ return a.dayIndex-b.dayIndex || a.order-b.order; }); }
+  function itineraryForTripDay(tripId, dayIndex){ return itineraryForTrip(tripId).filter(function(it){ return it.dayIndex===dayIndex; }); }
+  function photosForTrip(tripId){ return state.travel.photos.filter(function(ph){ return ph.tripId===tripId; }); }
+  function photosForPlace(placeId){ return state.travel.photos.filter(function(ph){ return ph.placeId===placeId; }); }
+  function tripDayCount(t){
+    if(!t.startDate || !t.endDate) return 1;
+    return Math.max(1, Math.round((parseISO(t.endDate)-parseISO(t.startDate))/86400000)+1);
+  }
+  function tripDayDate(t, dayIndex){ return t.startDate ? addDays(t.startDate, dayIndex) : null; }
+  function tripCoverImage(t){
+    if(t.coverImage) return t.coverImage;
+    var withPhoto = photosForTrip(t.id).filter(function(ph){ return ph.dataUrl; })[0];
+    return withPhoto ? withPhoto.dataUrl : null;
+  }
+  /* Trip currently underway "right now" — drives Today's "Today in {city}" panel and Home's
+     "Current trip" panel. Only ever one at a time in practice for a personal single-user log. */
+  function currentTrip(){
+    var today = todayISO();
+    return state.travel.trips.filter(function(t){ return !t.archived && t.startDate && t.startDate<=today && t.endDate && t.endDate>=today; })[0] || null;
+  }
+  function upcomingTrips(limit){
+    var today = todayISO();
+    return state.travel.trips.filter(function(t){ return !t.archived && t.startDate && t.startDate>today; })
+      .slice().sort(function(a,b){ return a.startDate<b.startDate?-1:1; }).slice(0, limit||5);
+  }
+
   function normalizeHabit(h, idx){
     return {
       id: h.id || uid(),
@@ -1664,6 +1925,12 @@
         if(!Array.isArray(state.timeBlocks)) state.timeBlocks = [];
         if(!Array.isArray(state.dailyPlan)) state.dailyPlan = [];
         if(!state.dayNotes || typeof state.dayNotes!=="object") state.dayNotes = {};
+        state.travel = Object.assign({ trips:[], places:[], tripPlaces:[], itinerary:[], photos:[] }, parsed.travel || {});
+        if(!Array.isArray(state.travel.trips)) state.travel.trips = [];
+        if(!Array.isArray(state.travel.places)) state.travel.places = [];
+        if(!Array.isArray(state.travel.tripPlaces)) state.travel.tripPlaces = [];
+        if(!Array.isArray(state.travel.itinerary)) state.travel.itinerary = [];
+        if(!Array.isArray(state.travel.photos)) state.travel.photos = [];
       }
     state.habits = (state.habits||[]).map(normalizeHabit);
     state.study.subjects = (state.study.subjects||[]).map(normalizeSubject);
@@ -1683,6 +1950,11 @@
     seedExampleChallenges();
     state.body.metrics = (state.body.metrics||[]).map(normalizeBodyMetric);
     state.body.measurements = (state.body.measurements||[]).map(normalizeBodyMeasurement);
+    state.travel.trips = (state.travel.trips||[]).map(normalizeTrip);
+    state.travel.places = (state.travel.places||[]).map(normalizePlace);
+    state.travel.tripPlaces = (state.travel.tripPlaces||[]).map(normalizeTripPlace);
+    state.travel.itinerary = (state.travel.itinerary||[]).map(normalizeItineraryItem);
+    state.travel.photos = (state.travel.photos||[]).map(normalizeTravelPhoto);
   }
 
   /* Local-only load, used for the very first paint (before we know if there's a signed-in
@@ -2711,7 +2983,8 @@
     { id:"library",   label:"Library",   accent:"var(--steel)" },
     { id:"studying",  label:"Studying",  accent:"var(--rose)" },
     { id:"challenges", label:"Challenges", accent:"var(--good)" },
-    { id:"body",      label:"Body",      accent:"var(--home-purple)" }
+    { id:"body",      label:"Body",      accent:"var(--home-purple)" },
+    { id:"travel",    label:"Travel",    accent:"var(--teal)" }
   ];
   var activeTab = "home";
   /* ---- Library nav state ---- */
@@ -2838,6 +3111,27 @@
   var bodyEditingMeasurementId = null;
   var bodyOpenMenuId = null;       // row-menu popover (shared by All metrics + Records rows)
   var bodyInspireDismissed = {};   // { [metricId]: true } — "Need inspiration" suggestions dismissed this session
+  /* ---- Travel nav state (v23) ---- */
+  var travelPage = "overview";     // 'overview' | 'trips' | 'map' | 'places' | 'reviews' | 'itineraries' | 'stats' | 'trip' | 'place'
+  var travelTripId = null;         // set when travelPage==='trip'
+  var travelTripTab = "overview";  // 'overview' | 'itinerary' | 'map' | 'places' | 'photos' | 'reviews' | 'expenses' | 'notes'
+  var travelTripDay = 0;           // active day index within the Itinerary subtab
+  var travelPlaceId = null;        // set when travelPage==='place'
+  var travelPlaceTab = "overview"; // 'overview' | 'photos' | 'reviews' | 'itinerary' | 'map'
+  var travelSearchQuery = "";
+  var travelPlacesFilter = { category:"all", status:"all", country:"all" };
+  var travelMapSelected = null;    // countryCode of the map marker cluster currently expanded/previewed
+  var travelShowAddTrip = false;
+  var travelEditingTripId = null;
+  var travelPendingCoverImage = null;
+  var travelShowAddPlace = false;
+  var travelEditingPlaceId = null;
+  var travelAddPlaceTripId = null; // when adding a Place from inside a trip, auto-links it via a TripPlace record on submit
+  var travelPendingPlaceCoverImage = null;
+  var travelShowAddItinerary = false;
+  var travelEditingItineraryId = null;
+  var travelShowAddPhoto = false;
+  var travelAddPhotoContext = null; // { tripId, placeId } — which trip/place a photo upload attaches to
 
   function goToTab(id){
     if(id==="today") todayViewDate = todayISO(); // Today always opens on the real current date
@@ -3649,6 +3943,11 @@
   var CLOCK_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>';
   var CHEVRON_DOWN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>';
   var FLAG_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4"/><path d="M5 4c2-1.5 4-1.5 6 0s4 1.5 6 0v8c-2 1.5-4 1.5-6 0s-4-1.5-6 0Z"/></svg>';
+  var COMPASS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M14.8 9.2 13 13l-3.8 1.8L11 11Z"/></svg>';
+  var PIN_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-5.7-6.5-11a6.5 6.5 0 0 1 13 0c0 5.3-6.5 11-6.5 11Z"/><circle cx="12" cy="10" r="2.2"/></svg>';
+  var GLOBE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 4 6 4 9s-1.4 6.4-4 9c-2.6-2.6-4-6-4-9s1.4-6.4 4-9Z"/></svg>';
+  var CAMERA_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.5-2h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13.5" r="3.3"/></svg>';
+  var ROUTE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="6" r="2"/><circle cx="19" cy="18" r="2"/><path d="M5 8v3a3 3 0 0 0 3 3h4a3 3 0 0 1 3 3v1"/></svg>';
   var GRID_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>';
   var PLUS_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5v15M4.5 12h15"/></svg>';
   var SWIM_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="1.6"/><path d="M2 17c1.6 1.4 3.2 1.4 4.8 0 1.6-1.4 3.2-1.4 4.8 0 1.6 1.4 3.2 1.4 4.8 0 1.6-1.4 3.2-1.4 4.8 0M2 21c1.6 1.4 3.2 1.4 4.8 0 1.6-1.4 3.2-1.4 4.8 0 1.6 1.4 3.2 1.4 4.8 0 1.6-1.4 3.2-1.4 4.8 0M8 13l4.5-5.5L17 11l-3 4"/></svg>';
@@ -3673,6 +3972,7 @@
       case "studying": return CAP_SVG;
       case "challenges": return FLAG_SVG;
       case "body": return PULSE_SVG;
+      case "travel": return COMPASS_SVG;
       default: return "";
     }
   }
@@ -3913,6 +4213,10 @@
       if(!m) return;
       items.push({ date:x.date, title:esc(m.name), meta:"Body"+(x.note?" · "+esc(x.note):""), value:bodyFormatValue(m,x.value), accent:"var(--home-purple)", nav:"body" });
     });
+    state.travel.places.forEach(function(p){
+      if(p.status!=="visited" || !p.reviewDate) return;
+      items.push({ date:p.reviewDate, title:esc(p.name)+(p.rating?" — "+p.rating+"/5":""), meta:"Travel · "+esc(placeCategoryMeta(p.category).label), value:"", accent:"var(--teal)", nav:"travel", tripId:null, placeId:p.id });
+    });
     items.reverse().sort(function(a,b){ return a.date<b.date ? 1 : a.date>b.date ? -1 : 0; }); // reverse first so same-day ties show newest-added on top
     return items.slice(0, limit||6);
   }
@@ -3920,6 +4224,12 @@
   function getLookingAhead(){
     var items = [];
     var today = todayISO();
+
+    upcomingTrips(4).forEach(function(t){
+      var days = Math.ceil((parseISO(t.startDate)-parseISO(today))/86400000);
+      var meta = [t.city, countryName(t.countryCode)].filter(Boolean).join(", ")+" · "+days+" day"+(days===1?"":"s")+" to go";
+      items.push({ date:t.startDate, title:"Trip: "+esc(t.name||"Untitled trip"), meta:meta, nav:"travel", tripId:t.id });
+    });
 
     activeChallengesList().forEach(function(c){
       var target = c.eventDate || c.endDate;
@@ -4060,7 +4370,8 @@
       '<div class="panel">'+
         '<div class="panel-head"><h2>Recent</h2><span class="hint">Your recent activity</span></div>'+
         (recent.length ? recent.map(function(it){
-          return '<button type="button" class="home-row-btn" data-home-nav="'+it.nav+'">'+
+          var attr = it.placeId ? 'data-home-place="'+it.placeId+'"' : 'data-home-nav="'+it.nav+'"';
+          return '<button type="button" class="home-row-btn" '+attr+'>'+
             '<span class="home-row-when">'+daysAgoLabel(it.date)+'</span>'+
             '<div class="home-row-main">'+
               '<div class="home-row-title">'+it.title+(it.value?'<span class="home-row-value">'+esc(it.value)+'</span>':'')+'</div>'+
@@ -4073,13 +4384,26 @@
         '<div class="panel-head"><h2>Looking ahead</h2></div>'+
         (ahead.length ? ahead.map(function(it){
           var d = parseISO(it.date);
-          return '<button type="button" class="home-row-btn" data-home-nav="'+it.nav+'">'+
+          var attr = it.tripId ? 'data-home-trip="'+it.tripId+'"' : 'data-home-nav="'+it.nav+'"';
+          return '<button type="button" class="home-row-btn" '+attr+'>'+
             '<span class="home-ahead-date">'+d.toLocaleDateString(undefined,{month:"short"}).toUpperCase()+'<span class="num">'+d.getDate()+'</span></span>'+
             '<div class="home-row-main"><div class="home-row-title">'+it.title+'</div><div class="home-row-meta">'+it.meta+'</div></div>'+
           '</button>';
         }).join("") : '<p class="home-empty">Nothing planned yet. <button type="button" class="home-link-btn" data-home-nav="calendar">Open calendar →</button></p>')+
       '</div>'+
     '</div>';
+
+    var curTrip = currentTrip();
+    if(curTrip){
+      var curMeta = [curTrip.city, countryName(curTrip.countryCode)].filter(Boolean).join(", ");
+      html += '<div class="panel" style="margin-top:20px;--accent:var(--good);border-color:var(--good)">'+
+        '<div class="panel-head"><h2>Current trip</h2><span class="chal-badge" style="color:var(--good);border-color:var(--good)">Ongoing</span></div>'+
+        '<button type="button" class="home-row-btn" data-home-trip="'+curTrip.id+'">'+
+          '<span class="home-row-when">'+PIN_SVG+'</span>'+
+          '<div class="home-row-main"><div class="home-row-title">'+esc(curTrip.name||curMeta)+'</div><div class="home-row-meta">'+esc(curMeta)+'</div></div>'+
+        '</button>'+
+      '</div>';
+    }
 
     var t = parseISO(today);
     var monthData = getMonthlyLoggedDays(t.getFullYear(), t.getMonth());
@@ -4403,7 +4727,23 @@
         (hasBlocks ? todayPlanFootHTML(iso) : "")+
       '</div>'+modal;
 
-    return hero+
+    var travelPanel = "";
+    var curTrip = (iso===todayISO()) ? currentTrip() : null;
+    if(curTrip){
+      var dayIdx = Math.round((parseISO(iso)-parseISO(curTrip.startDate))/86400000);
+      var items = itineraryForTripDay(curTrip.id, dayIdx);
+      var cityLabel = curTrip.city || countryName(curTrip.countryCode) || curTrip.name;
+      travelPanel = '<div class="panel" style="margin-top:16px;--accent:var(--good);border-color:var(--good)">'+
+        '<div class="panel-head"><h2>Today in '+esc(cityLabel)+'</h2><button type="button" class="btn-ghost" data-today-open-trip="'+curTrip.id+'">Open trip</button></div>'+
+        (items.length ? '<div class="stack">'+items.map(function(it){
+          var timeLabel = it.time ? it.time+(it.endTime?" – "+it.endTime:"") : "";
+          return '<div class="row"><span class="chal-type-icon" style="background:var(--teal)">'+PIN_SVG+'</span>'+
+            '<div class="main"><div class="title">'+esc(it.title||itineraryTypeLabel(it.type))+'</div><div class="meta">'+esc(itineraryTypeLabel(it.type))+(timeLabel?" · "+esc(timeLabel):"")+'</div></div></div>';
+        }).join("")+'</div>' : '<p class="empty">Nothing scheduled for today on this trip.</p>')+
+      '</div>';
+    }
+
+    return hero+travelPanel+
       '<div style="margin-top:16px">'+todayQuickMetricsHTML()+'</div>'+
       '<div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Recent activity</h2></div>'+todayRecentActivityHTML()+'</div>'+
       '<div class="panel" style="margin-top:16px"><div class="panel-head"><h2>Recent expenses</h2>'+(state.expenses.length>5?'<button type="button" class="cal-link-btn" style="padding:0" data-today-nav="expenses">View all '+ARROW_SVG+'</button>':'')+'</div>'+ recentRowsHTML(state.expenses.slice().reverse().sort(byDateDesc).slice(0,5), "expense-readonly") +'</div>'+
@@ -8478,8 +8818,707 @@
     '</div>';
   }
 
+  /* ============ TRAVEL: render (v23) ============
+     Structure mirrors Challenges (overview list -> detail page with its own subtabs) and reuses
+     the same primitives everywhere: .cal-subtabs/.cal-subtab for horizontal tab strips (chosen
+     over a Body-style secondary sidebar since the user's own mockups show horizontal tabs),
+     .modal-backdrop/.modal-card + .drawer-backdrop/.drawer-card for add/edit forms, .chal-badge/
+     .chal-type-icon for status pills and colored icon tiles, .panel/.hero-stat/.row for layout. */
+
+  var TRAVEL_TOP_TABS = [["overview","Overview"],["trips","Trips"],["map","Map"],["places","Places"],["reviews","Reviews"],["itineraries","Itineraries"],["stats","Stats"]];
+  function travelSubtabsHTML(){
+    return '<div class="cal-subtabs" style="margin-bottom:18px">'+TRAVEL_TOP_TABS.map(function(t){
+      return '<button type="button" class="cal-subtab'+(travelPage===t[0]?" active":"")+'" data-trv-page="'+t[0]+'">'+t[1]+'</button>';
+    }).join("")+'</div>';
+  }
+
+  function travelStatusColor(status){ return (TRIP_STATUS_META[status]||TRIP_STATUS_META.planning).color; }
+  function placeStatusMeta(status){
+    return { saved:{label:"Saved",color:"var(--steel)"}, planned:{label:"Planned",color:"var(--mustard)"}, visited:{label:"Visited",color:"var(--good)"} }[status] || { label:"Saved", color:"var(--steel)" };
+  }
+
+  function tripRowHTML(t){
+    var status = tripStatus(t);
+    var meta = [t.city, countryName(t.countryCode)].filter(Boolean).join(", ");
+    var dateLabel = t.startDate ? (fmtShort(t.startDate)+(t.endDate && t.endDate!==t.startDate ? " – "+fmtShort(t.endDate) : "")) : "No dates set";
+    return '<div class="row" data-trv-open-trip="'+t.id+'" style="cursor:pointer">'+
+      '<span class="chal-type-icon" style="background:'+(t.color||"var(--teal)")+'">'+PIN_SVG+'</span>'+
+      '<div class="main"><div class="title">'+esc(t.name||meta||"Untitled trip")+'</div><div class="meta">'+esc(meta||"No destination set")+' · '+esc(dateLabel)+'</div></div>'+
+      '<span class="chal-badge" style="color:'+travelStatusColor(status)+';border-color:'+travelStatusColor(status)+'">'+TRIP_STATUS_META[status].label+'</span>'+
+    '</div>';
+  }
+
+  function placeRowHTML(p){
+    var cat = placeCategoryMeta(p.category);
+    var meta = [p.city, countryName(p.countryCode)].filter(Boolean).join(", ") || cat.label;
+    var sMeta = placeStatusMeta(p.status);
+    return '<div class="row" data-trv-open-place="'+p.id+'" style="cursor:pointer">'+
+      catIconHTML(p.name||cat.label, cat.color)+
+      '<div class="main"><div class="title">'+esc(p.name||"Untitled place")+(p.favorite?' <span title="Favorite" style="color:var(--ember)">&#9733;</span>':"")+'</div><div class="meta">'+esc(cat.label)+' · '+esc(meta)+(p.rating?' · '+p.rating+"/5":"")+'</div></div>'+
+      '<span class="chal-badge" style="color:'+sMeta.color+';border-color:'+sMeta.color+'">'+sMeta.label+'</span>'+
+    '</div>';
+  }
+
+  function renderTravel(){
+    if(travelPage==="trip" && travelTripId) return travelTripDetailHTML(travelTripId);
+    if(travelPage==="place" && travelPlaceId) return travelPlaceDetailHTML(travelPlaceId);
+    var head = '<div class="habits-head"><div><h2>Travel</h2><p>Where you have been, and where you are headed.</p></div>'+
+      '<button type="button" class="btn btn-primary" style="background:var(--teal)" data-trv-new-trip>+ Add trip</button></div>';
+    var body;
+    switch(travelPage){
+      case "trips": body = travelTripsPageHTML(); break;
+      case "map": body = travelMapPageHTML(); break;
+      case "places": body = travelPlacesPageHTML(); break;
+      case "reviews": body = travelReviewsPageHTML(); break;
+      case "itineraries": body = travelItinerariesPageHTML(); break;
+      case "stats": body = travelStatsPageHTML(); break;
+      default: body = travelOverviewPageHTML();
+    }
+    var modals = (travelShowAddTrip?travelTripModalHTML():"") + (travelShowAddPlace?travelPlaceModalHTML():"") + (travelShowAddItinerary?travelItineraryModalHTML():"");
+    return head + travelSubtabsHTML() + body + modals;
+  }
+
+  /* ---- Overview ---- */
+  function travelOverviewPageHTML(){
+    var trips = state.travel.trips.filter(function(t){ return !t.archived; });
+    var visitedCountries = {};
+    state.travel.places.forEach(function(p){ if(p.status==="visited" && p.countryCode) visitedCountries[p.countryCode]=true; });
+    trips.forEach(function(t){ if(tripStatus(t)==="completed" && t.countryCode) visitedCountries[t.countryCode]=true; });
+    var countryCount = Object.keys(visitedCountries).length;
+    var visitedPlacesCount = state.travel.places.filter(function(p){ return p.status==="visited"; }).length;
+    var savedCount = state.travel.places.filter(function(p){ return p.status==="saved"; }).length;
+
+    var html = '<div class="hero-stat">'+
+      '<div><div class="hero-label">Countries visited</div><div class="hero-num">'+countryCount+'</div><div class="hero-sub">'+trips.length+' trip'+(trips.length===1?"":"s")+' logged</div></div>'+
+      '<div class="trv-mini-stats">'+
+        '<div class="trv-mini"><div class="trv-mini-num">'+visitedPlacesCount+'</div><div class="trv-mini-label">Places visited</div></div>'+
+        '<div class="trv-mini"><div class="trv-mini-num">'+savedCount+'</div><div class="trv-mini-label">Saved for later</div></div>'+
+      '</div>'+
+    '</div>';
+
+    var cur = currentTrip();
+    if(cur){
+      html += '<div class="panel" style="--accent:var(--good);border-color:var(--good)"><div class="panel-head"><h2>Current trip</h2></div>'+
+        tripRowHTML(cur) + '</div>';
+    }
+
+    var upcoming = upcomingTrips(3);
+    html += '<div class="panel"><div class="panel-head"><h2>Looking ahead</h2><button type="button" class="btn-ghost" data-trv-page="trips">See all trips</button></div>'+
+      (upcoming.length ? '<div class="stack">'+upcoming.map(tripRowHTML).join("")+'</div>' : '<p class="empty">No upcoming trips planned yet.</p>')+
+    '</div>';
+
+    var recentPlaces = state.travel.places.filter(function(p){ return p.status==="visited"; })
+      .slice().sort(function(a,b){ return (b.reviewDate||b.updatedAt)<(a.reviewDate||a.updatedAt) ? -1 : 1; }).slice(0,5);
+    html += '<div class="panel"><div class="panel-head"><h2>Recently visited</h2><button type="button" class="btn-ghost" data-trv-page="places">See all places</button></div>'+
+      (recentPlaces.length ? '<div class="stack">'+recentPlaces.map(placeRowHTML).join("")+'</div>' : '<p class="empty">Mark a place as visited to see it here.</p>')+
+    '</div>';
+
+    return html;
+  }
+
+  /* ---- Trips list ---- */
+  function travelTripsPageHTML(){
+    var trips = state.travel.trips.slice().sort(function(a,b){
+      var order = { ongoing:0, upcoming:1, planning:2, completed:3, archived:4 };
+      var sa = tripStatus(a), sb = tripStatus(b);
+      if(order[sa]!==order[sb]) return order[sa]-order[sb];
+      return (b.startDate||"")<(a.startDate||"") ? -1 : 1;
+    });
+    if(!trips.length) return '<div class="panel"><p class="empty">No trips yet — add your first one to start building your travel log.</p></div>';
+    return '<div class="panel"><div class="stack">'+trips.map(tripRowHTML).join("")+'</div></div>';
+  }
+
+  /* ---- Places (filterable list, doubles as the saved/bucket-list view via the Status filter) ---- */
+  function travelFilteredPlaces(){
+    var f = travelPlacesFilter;
+    var q = travelSearchQuery.trim().toLowerCase();
+    return state.travel.places.filter(function(p){
+      if(f.category!=="all" && p.category!==f.category) return false;
+      if(f.status!=="all" && p.status!==f.status) return false;
+      if(f.country!=="all" && p.countryCode!==f.country) return false;
+      if(q && (p.name||"").toLowerCase().indexOf(q)===-1 && (p.city||"").toLowerCase().indexOf(q)===-1) return false;
+      return true;
+    }).slice().sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); });
+  }
+  function travelUsedCountryOptions(){
+    var used = {};
+    state.travel.places.forEach(function(p){ if(p.countryCode) used[p.countryCode]=true; });
+    state.travel.trips.forEach(function(t){ if(t.countryCode) used[t.countryCode]=true; });
+    return Object.keys(used).sort(function(a,b){ return countryName(a).localeCompare(countryName(b)); });
+  }
+  function travelPlacesPageHTML(){
+    var list = travelFilteredPlaces();
+    var countryOpts = travelUsedCountryOptions();
+    var filters = '<div class="field-row" style="align-items:flex-end;flex-wrap:wrap;gap:10px">'+
+      '<label class="f" style="flex:1;min-width:160px">Search<input type="text" id="trv-places-search" value="'+esc(travelSearchQuery)+'" placeholder="Search places..."></label>'+
+      '<div class="f"><label style="font-size:.76rem;color:var(--ink-faint)">Category</label><select id="trv-filter-category" data-picker="select">'+
+        '<option value="all"'+(travelPlacesFilter.category==="all"?" selected":"")+'>All categories</option>'+
+        PLACE_CATEGORIES.map(function(c){ return '<option value="'+c.id+'"'+(travelPlacesFilter.category===c.id?" selected":"")+'>'+esc(c.label)+'</option>'; }).join("")+
+      '</select></div>'+
+      '<div class="f"><label style="font-size:.76rem;color:var(--ink-faint)">Status</label><select id="trv-filter-status" data-picker="select">'+
+        ["all","saved","planned","visited"].map(function(s){ return '<option value="'+s+'"'+(travelPlacesFilter.status===s?" selected":"")+'>'+(s==="all"?"All statuses":placeStatusMeta(s).label)+'</option>'; }).join("")+
+      '</select></div>'+
+      (countryOpts.length ? '<div class="f"><label style="font-size:.76rem;color:var(--ink-faint)">Country</label><select id="trv-filter-country" data-picker="select">'+
+        '<option value="all"'+(travelPlacesFilter.country==="all"?" selected":"")+'>All countries</option>'+
+        countryOpts.map(function(cc){ return '<option value="'+cc+'"'+(travelPlacesFilter.country===cc?" selected":"")+'>'+esc(countryName(cc))+'</option>'; }).join("")+
+      '</select></div>' : "")+
+      '<button type="button" class="btn btn-primary" data-trv-new-place>+ Add place</button>'+
+    '</div>';
+    var body = list.length ? '<div class="stack">'+list.map(placeRowHTML).join("")+'</div>' : '<p class="empty">No places match these filters yet.</p>';
+    return '<div class="panel">'+filters+'</div><div class="panel">'+body+'</div>';
+  }
+
+  /* ---- Reviews: every place with a rating or written review ---- */
+  function travelReviewsPageHTML(){
+    var reviewed = state.travel.places.filter(function(p){ return p.rating!=null || (p.reviewText||"").trim(); })
+      .slice().sort(function(a,b){ return (b.reviewDate||"")<(a.reviewDate||"") ? -1 : 1; });
+    if(!reviewed.length) return '<div class="panel"><p class="empty">No reviews yet — add a rating or notes to a visited place to see it here.</p></div>';
+    return '<div class="panel"><div class="stack">'+reviewed.map(function(p){
+      var cat = placeCategoryMeta(p.category);
+      var meta = [p.city, countryName(p.countryCode)].filter(Boolean).join(", ");
+      return '<div class="row" data-trv-open-place="'+p.id+'" style="cursor:pointer;align-items:flex-start">'+
+        catIconHTML(p.name||cat.label, cat.color)+
+        '<div class="main"><div class="title">'+esc(p.name)+(p.rating?' <span style="color:var(--gold);font-weight:600">'+p.rating+'/5</span>':"")+'</div>'+
+        '<div class="meta">'+esc(meta)+(p.reviewDate?" · "+fmtShort(p.reviewDate):"")+'</div>'+
+        (p.reviewText ? '<p style="margin:6px 0 0;font-size:.84rem;color:var(--ink-soft)">'+esc(p.reviewText)+'</p>' : "")+
+        '</div>'+
+      '</div>';
+    }).join("")+'</div></div>';
+  }
+
+  /* ---- Itineraries: a trip index linking into each trip's own itinerary builder ---- */
+  function travelItinerariesPageHTML(){
+    var trips = state.travel.trips.slice().sort(function(a,b){ return (a.startDate||"9999")<(b.startDate||"9999") ? -1 : 1; });
+    if(!trips.length) return '<div class="panel"><p class="empty">Add a trip first, then build its day-by-day itinerary from the trip page.</p></div>';
+    return '<div class="panel"><div class="stack">'+trips.map(function(t){
+      var count = state.travel.itinerary.filter(function(it){ return it.tripId===t.id; }).length;
+      var status = tripStatus(t);
+      var meta = [t.city, countryName(t.countryCode)].filter(Boolean).join(", ");
+      return '<div class="row" data-trv-open-itinerary="'+t.id+'" style="cursor:pointer">'+
+        '<span class="chal-type-icon" style="background:'+(t.color||"var(--teal)")+'">'+ROUTE_SVG+'</span>'+
+        '<div class="main"><div class="title">'+esc(t.name||meta||"Untitled trip")+'</div><div class="meta">'+esc(meta||"No destination set")+' · '+count+' item'+(count===1?"":"s")+'</div></div>'+
+        '<span class="chal-badge" style="color:'+travelStatusColor(status)+';border-color:'+travelStatusColor(status)+'">'+TRIP_STATUS_META[status].label+'</span>'+
+      '</div>';
+    }).join("")+'</div></div>';
+  }
+
+  /* ---- Stats ---- */
+  function travelStatsPageHTML(){
+    var trips = state.travel.trips.filter(function(t){ return !t.archived; });
+    var places = state.travel.places;
+    var visited = places.filter(function(p){ return p.status==="visited"; });
+    var byCategory = {};
+    visited.forEach(function(p){ byCategory[p.category] = (byCategory[p.category]||0)+1; });
+    var catEntries = Object.keys(byCategory).map(function(k){ return { label:placeCategoryMeta(k).label, value:byCategory[k], color:placeCategoryMeta(k).color }; }).sort(function(a,b){ return b.value-a.value; });
+
+    var byYear = {};
+    trips.forEach(function(t){ if(t.startDate){ var y=t.startDate.slice(0,4); byYear[y]=(byYear[y]||0)+tripDayCount(t); } });
+    var years = Object.keys(byYear).sort();
+    var yearEntries = years.map(function(y){ return { label:y, value:byYear[y] }; });
+
+    var totalDays = trips.reduce(function(s,t){ return s + (t.startDate&&t.endDate ? tripDayCount(t) : 0); },0);
+    var ratedPlaces = places.filter(function(p){ return p.rating!=null; });
+    var avgRating = ratedPlaces.length ? (ratedPlaces.reduce(function(s,p){ return s+p.rating; },0)/ratedPlaces.length) : null;
+
+    var html = '<div class="hero-stat">'+
+      '<div><div class="hero-label">Total days traveled</div><div class="hero-num">'+totalDays+'</div><div class="hero-sub">across '+trips.length+' trip'+(trips.length===1?"":"s")+'</div></div>'+
+      (avgRating!=null ? '<div class="trv-mini-stats"><div class="trv-mini"><div class="trv-mini-num">'+avgRating.toFixed(1)+'</div><div class="trv-mini-label">Avg. place rating</div></div></div>' : "")+
+    '</div>';
+
+    html += '<div class="panel"><div class="panel-head"><h2>Places by category</h2></div>'+
+      (catEntries.length ? barListHTML(catEntries, "var(--teal)", function(v){ return v+""; }) : '<p class="empty">Mark places as visited to see a breakdown here.</p>')+
+    '</div>';
+
+    if(yearEntries.length){
+      html += '<div class="panel"><div class="panel-head"><h2>Days traveled by year</h2></div>'+
+        barListHTML(yearEntries, "var(--home-blue)", function(v){ return v+"d"; })+
+      '</div>';
+    }
+    return html;
+  }
+
+  /* ---- World map: a hand-authored, stylized inline SVG (equirectangular projection, simplified
+     continent outlines) — not a tile/API-backed map. Markers are one dot per country (places are
+     only ever plotted at the country's centroid — see COUNTRY_CENTROIDS), clustered by count
+     since multiple places in the same country share one centroid. Clicking a dot opens a
+     click-to-preview popover listing what's there. This is disclosed in the page caption. */
+  var TRAVEL_MAP_W = 1000, TRAVEL_MAP_H = 500;
+  function trvProject(lat, lng){
+    return { x: (lng+180)/360*TRAVEL_MAP_W, y: (90-lat)/180*TRAVEL_MAP_H };
+  }
+  var TRAVEL_CONTINENT_BLOBS = [
+    [[-165,68],[-140,70],[-95,75],[-60,62],[-52,47],[-65,45],[-80,25],[-97,18],[-105,20],[-115,30],[-124,40],[-125,49],[-135,58],[-165,68]],
+    [[-80,10],[-60,10],[-35,-5],[-35,-23],[-58,-35],[-68,-55],[-75,-45],[-81,-20],[-80,10]],
+    [[-10,43],[-5,50],[5,60],[20,70],[30,65],[40,55],[40,45],[28,40],[15,38],[-5,36],[-10,43]],
+    [[-17,15],[0,37],[10,37],[20,32],[33,31],[43,12],[51,10],[43,-5],[35,-25],[20,-35],[15,-25],[12,-5],[10,5],[-10,10],[-17,15]],
+    [[28,42],[40,45],[45,55],[60,70],[90,75],[130,70],[140,55],[130,45],[122,25],[105,10],[95,5],[80,8],[70,20],[60,25],[48,30],[35,35],[28,42]],
+    [[113,-22],[122,-18],[135,-12],[145,-17],[153,-27],[150,-38],[140,-38],[129,-32],[115,-34],[113,-22]]
+  ];
+  function travelBlobsSVG(){
+    return TRAVEL_CONTINENT_BLOBS.map(function(pts){
+      var d = pts.map(function(pt,i){ var xy=trvProject(pt[1],pt[0]); return (i===0?"M":"L")+xy.x.toFixed(1)+","+xy.y.toFixed(1); }).join(" ")+" Z";
+      return '<path d="'+d+'" class="trv-map-land"/>';
+    }).join("");
+  }
+  function travelCountryMarkers(){
+    var byCountry = {};
+    state.travel.places.forEach(function(p){
+      if(!p.countryCode || !COUNTRY_CENTROIDS[p.countryCode]) return;
+      byCountry[p.countryCode] = byCountry[p.countryCode] || { countryCode:p.countryCode, count:0, bestStatus:"saved", placeIds:[] };
+      byCountry[p.countryCode].count++;
+      byCountry[p.countryCode].placeIds.push(p.id);
+      var rank = { saved:0, planned:1, visited:2 };
+      if(rank[p.status]>rank[byCountry[p.countryCode].bestStatus]) byCountry[p.countryCode].bestStatus = p.status;
+    });
+    return Object.keys(byCountry).map(function(cc){ return byCountry[cc]; });
+  }
+  function travelMapPageHTML(){
+    var markers = travelCountryMarkers();
+    var mapSvg = '<svg viewBox="0 0 '+TRAVEL_MAP_W+' '+TRAVEL_MAP_H+'" class="trv-map-svg" data-trv-map>'+
+      travelBlobsSVG()+
+      markers.map(function(m){
+        var c = COUNTRY_CENTROIDS[m.countryCode];
+        var xy = trvProject(c[0], c[1]);
+        var color = placeStatusMeta(m.bestStatus).color;
+        var selected = travelMapSelected===m.countryCode;
+        return '<g class="trv-map-marker" data-trv-map-marker="'+m.countryCode+'" transform="translate('+xy.x.toFixed(1)+','+xy.y.toFixed(1)+')">'+
+          '<circle r="'+(selected?9:7)+'" fill="'+color+'" stroke="#fff" stroke-width="1.5"/>'+
+          (m.count>1 ? '<text text-anchor="middle" dy="3.2" font-size="8" fill="#fff" font-weight="700">'+m.count+'</text>' : "")+
+        '</g>';
+      }).join("")+
+    '</svg>';
+
+    var legend = '<div class="trv-map-legend">'+
+      ["visited","planned","saved"].map(function(s){ return '<span class="trv-legend-item"><span class="trv-legend-dot" style="background:'+placeStatusMeta(s).color+'"></span>'+placeStatusMeta(s).label+'</span>'; }).join("")+
+    '</div>';
+
+    var popover = "";
+    if(travelMapSelected){
+      var here = state.travel.places.filter(function(p){ return p.countryCode===travelMapSelected; });
+      popover = '<div class="panel" style="margin-top:14px"><div class="panel-head"><h2>'+esc(countryName(travelMapSelected))+'</h2><button type="button" class="btn-ghost" data-trv-map-close>Close</button></div>'+
+        '<div class="stack">'+here.map(placeRowHTML).join("")+'</div></div>';
+    }
+
+    return '<div class="panel"><div class="panel-head"><h2>World map</h2></div>'+
+      '<p class="hint" style="margin:-6px 0 12px">A simplified world outline — markers sit at each country\'s approximate center, not the exact place, since this app does not use a live mapping API.</p>'+
+      '<div class="trv-map-wrap">'+mapSvg+'</div>'+legend+
+    '</div>'+popover;
+  }
+
+  /* ---- Trip route diagram: a schematic, non-geographic sequence of stops (ordered dots + lines),
+     since real per-city coordinates aren't available — explicitly NOT a real map. */
+  function tripRouteDiagramSVG(places){
+    if(!places.length) return '<p class="empty">Add places to this trip to see them here.</p>';
+    var w = 640, pad = 50, n = places.length;
+    var step = n>1 ? (w-pad*2)/(n-1) : 0;
+    var y = 60;
+    var lines = places.map(function(p,i){
+      if(i===0) return "";
+      var x1 = pad+step*(i-1), x2 = pad+step*i;
+      return '<line x1="'+x1+'" y1="'+y+'" x2="'+x2+'" y2="'+y+'" stroke="var(--border)" stroke-width="2"/>';
+    }).join("");
+    var dots = places.map(function(p,i){
+      var x = pad+step*i;
+      var cat = placeCategoryMeta(p.category);
+      return '<g data-trv-open-place="'+p.id+'" style="cursor:pointer">'+
+        '<circle cx="'+x+'" cy="'+y+'" r="8" fill="'+cat.color+'" stroke="#fff" stroke-width="2"/>'+
+        '<text x="'+x+'" y="'+(y+26)+'" text-anchor="middle" font-size="11" fill="var(--ink-soft)">'+esc((p.name||"").slice(0,14))+'</text>'+
+      '</g>';
+    }).join("");
+    return '<svg viewBox="0 0 '+w+' 100" class="trv-route-svg">'+lines+dots+'</svg>';
+  }
+
+  /* ============ TRAVEL: trip detail ============ */
+  var TRAVEL_TRIP_TABS = [["overview","Overview"],["itinerary","Itinerary"],["map","Map"],["places","Places"],["photos","Photos"],["reviews","Reviews"],["expenses","Expenses"],["notes","Notes"]];
+  function travelTripDetailHTML(id){
+    var t = tripById(id);
+    if(!t){ travelPage="trips"; travelTripId=null; return travelTripsPageHTML(); }
+    var status = tripStatus(t);
+    var meta = [t.city, countryName(t.countryCode)].filter(Boolean).join(", ");
+    var dateLabel = t.startDate ? (fmtShort(t.startDate)+(t.endDate && t.endDate!==t.startDate ? " – "+fmtShort(t.endDate) : "")) : "No dates set";
+
+    var head = '<button type="button" class="cal-back-btn" data-trv-back-trips>&larr; All trips</button>'+
+      '<div class="chal-detail-head" style="margin-top:8px">'+
+        '<span class="chal-type-icon" style="background:'+(t.color||"var(--teal)")+';width:52px;height:52px;border-radius:14px">'+PIN_SVG+'</span>'+
+        '<div style="flex:1;min-width:200px"><h2 style="margin:0 0 4px">'+esc(t.name||meta||"Untitled trip")+'</h2>'+
+        '<div class="meta">'+esc(meta||"No destination set")+' · '+esc(dateLabel)+(t.companions?" · with "+esc(t.companions):"")+'</div></div>'+
+        '<span class="chal-badge" style="color:'+travelStatusColor(status)+';border-color:'+travelStatusColor(status)+'">'+TRIP_STATUS_META[status].label+'</span>'+
+        '<button type="button" class="btn-ghost" data-trv-edit-trip="'+t.id+'" title="Edit">&#9998;</button>'+
+      '</div>';
+
+    var tabsHTML = '<div class="cal-subtabs">'+TRAVEL_TRIP_TABS.map(function(tb){
+      return '<button type="button" class="cal-subtab'+(travelTripTab===tb[0]?" active":"")+'" data-trv-trip-tab="'+tb[0]+'">'+tb[1]+'</button>';
+    }).join("")+'</div>';
+
+    var body;
+    switch(travelTripTab){
+      case "itinerary": body = travelTripItineraryHTML(t); break;
+      case "map": body = travelTripMapHTML(t); break;
+      case "places": body = travelTripPlacesHTML(t); break;
+      case "photos": body = travelTripPhotosHTML(t); break;
+      case "reviews": body = travelTripReviewsHTML(t); break;
+      case "expenses": body = travelTripExpensesHTML(t); break;
+      case "notes": body = travelTripNotesHTML(t); break;
+      default: body = travelTripOverviewHTML(t);
+    }
+    var modals = (travelShowAddTrip?travelTripModalHTML():"") + (travelShowAddPlace?travelPlaceModalHTML():"") + (travelShowAddItinerary?travelItineraryModalHTML():"");
+    return head + tabsHTML + body + modals;
+  }
+
+  function travelTripOverviewHTML(t){
+    var places = placesForTrip(t.id);
+    var itinerary = itineraryForTrip(t.id);
+    var photos = photosForTrip(t.id);
+    var spent = state.expenses.filter(function(e){ return e.tripId===t.id; }).reduce(function(s,e){ return s+Number(e.amount||0); },0);
+    var html = '<div class="trv-mini-stats" style="justify-content:flex-start;gap:26px;margin-bottom:18px">'+
+      '<div class="trv-mini"><div class="trv-mini-num">'+tripDayCount(t)+'</div><div class="trv-mini-label">Days</div></div>'+
+      '<div class="trv-mini"><div class="trv-mini-num">'+places.length+'</div><div class="trv-mini-label">Places</div></div>'+
+      '<div class="trv-mini"><div class="trv-mini-num">'+itinerary.length+'</div><div class="trv-mini-label">Itinerary items</div></div>'+
+      '<div class="trv-mini"><div class="trv-mini-num">'+photos.length+'</div><div class="trv-mini-label">Photos</div></div>'+
+      (t.budget ? '<div class="trv-mini"><div class="trv-mini-num">'+money(spent)+'</div><div class="trv-mini-label">of '+money(t.budget)+' spent</div></div>' : "")+
+    '</div>';
+    if(t.notes) html += '<div class="panel"><div class="panel-head"><h2>Notes</h2></div><p style="white-space:pre-wrap;font-size:.88rem;color:var(--ink-soft)">'+esc(t.notes)+'</p></div>';
+    html += '<div class="panel"><div class="panel-head"><h2>Places</h2><button type="button" class="btn-ghost" data-trv-trip-tab-go="places">See all</button></div>'+
+      (places.length ? '<div class="stack">'+places.slice(0,5).map(placeRowHTML).join("")+'</div>' : '<p class="empty">No places added yet.</p>')+
+    '</div>';
+    return html;
+  }
+
+  function travelDayTabsHTML(t, activeDay){
+    var n = tripDayCount(t);
+    var tabs = [];
+    for(var i=0;i<n;i++){
+      var d = tripDayDate(t,i);
+      tabs.push('<button type="button" class="cal-subtab'+(activeDay===i?" active":"")+'" data-trv-trip-day="'+i+'">Day '+(i+1)+(d?'<br><span style="font-weight:400;font-size:.68rem">'+fmtShort(d)+'</span>':"")+'</button>');
+    }
+    return '<div class="cal-subtabs" style="flex-wrap:wrap">'+tabs.join("")+'</div>';
+  }
+
+  function travelTripItineraryHTML(t){
+    var day = Math.min(travelTripDay, Math.max(0, tripDayCount(t)-1));
+    var items = itineraryForTripDay(t.id, day);
+    var dateForDay = tripDayDate(t, day);
+    var journalText = dateForDay ? (state.dayNotes[dateForDay]||"") : "";
+    var html = travelDayTabsHTML(t, day);
+    html += '<div class="panel"><div class="panel-head"><h2>Day '+(day+1)+(dateForDay?" · "+fmtShort(dateForDay):"")+'</h2>'+
+      '<button type="button" class="btn btn-primary" style="background:var(--teal)" data-trv-new-itinerary="'+day+'">+ Add item</button></div>'+
+      (items.length ? '<div class="stack">'+items.map(function(it){
+        var place = it.placeId ? placeById(it.placeId) : null;
+        var timeLabel = it.time ? it.time+(it.endTime?" – "+it.endTime:"") : "";
+        return '<div class="row" data-trv-edit-itinerary="'+it.id+'" style="cursor:pointer">'+
+          catIconHTML(itineraryTypeLabel(it.type), "var(--teal)")+
+          '<div class="main"><div class="title">'+esc(it.title||itineraryTypeLabel(it.type))+'</div>'+
+          '<div class="meta">'+esc(itineraryTypeLabel(it.type))+(timeLabel?" · "+esc(timeLabel):"")+(place?" · "+esc(place.name):"")+'</div></div>'+
+          (it.cost!=null ? '<span class="hint">'+money(it.cost)+'</span>' : "")+
+        '</div>';
+      }).join("")+'</div>' : '<p class="empty">Nothing planned for this day yet.</p>')+
+    '</div>';
+    html += '<div class="panel"><div class="panel-head"><h2>Journal — Day '+(day+1)+'</h2></div>'+
+      '<p class="hint" style="margin:-6px 0 10px">Shared with this date on your Calendar.</p>'+
+      '<textarea class="note-textarea" id="trv-day-journal" rows="4" data-trv-journal-date="'+(dateForDay||"")+'" placeholder="What happened today?"'+(dateForDay?"":" disabled")+'>'+esc(journalText)+'</textarea>'+
+    '</div>';
+    return html;
+  }
+
+  function travelTripMapHTML(t){
+    var places = placesForTrip(t.id);
+    return '<div class="panel"><div class="panel-head"><h2>Trip route</h2></div>'+
+      '<p class="hint" style="margin:-6px 0 12px">A schematic sequence of stops in itinerary order — not a real geographic route.</p>'+
+      '<div class="trv-map-wrap">'+tripRouteDiagramSVG(places)+'</div>'+
+    '</div>';
+  }
+
+  function travelTripPlacesHTML(t){
+    var links = tripPlacesForTrip(t.id);
+    var linkedIds = links.map(function(l){ return l.placeId; });
+    var unlinked = state.travel.places.filter(function(p){ return linkedIds.indexOf(p.id)===-1; });
+    var html = '<div class="panel"><div class="panel-head"><h2>Places on this trip</h2><button type="button" class="btn btn-primary" style="background:var(--teal)" data-trv-new-place-for-trip="'+t.id+'">+ New place</button></div>';
+    var places = placesForTrip(t.id);
+    html += places.length ? '<div class="stack">'+places.map(function(p){
+      var row = placeRowHTML(p);
+      return row.slice(0, row.lastIndexOf("</div>")) + '<button type="button" class="btn-ghost" data-trv-unlink-place="'+p.id+'|'+t.id+'" title="Remove from trip" style="color:var(--bad)">&times;</button></div>';
+    }).join("")+'</div>' : '<p class="empty">No places linked to this trip yet.</p>';
+    html += '</div>';
+    if(unlinked.length){
+      html += '<div class="panel"><div class="panel-head"><h2>Link an existing place</h2></div>'+
+        '<div class="field-row"><div class="f" style="flex:1"><select id="trv-link-place-select" data-picker="select">'+
+          unlinked.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+'</option>'; }).join("")+
+        '</select></div><button type="button" class="btn btn-primary" data-trv-link-place="'+t.id+'">Add to trip</button></div>'+
+      '</div>';
+    }
+    return html;
+  }
+
+  function travelTripPhotosHTML(t){
+    var photos = photosForTrip(t.id);
+    return '<div class="panel"><div class="panel-head"><h2>Photos</h2>'+
+      '<label class="btn btn-primary" style="background:var(--teal);cursor:pointer">+ Add photo<input type="file" accept="image/*" id="trv-photo-input" data-trv-photo-trip="'+t.id+'" style="display:none"></label>'+
+      '</div>'+
+      (photos.length ? '<div class="trv-photo-grid">'+photos.map(function(ph){
+        return '<div class="trv-photo-cell"><img src="'+ph.dataUrl+'" alt=""><button type="button" class="trv-photo-del" data-trv-del-photo="'+ph.id+'" title="Delete">&times;</button></div>';
+      }).join("")+'</div>' : '<p class="empty">No photos yet.</p>')+
+    '</div>';
+  }
+
+  function travelTripReviewsHTML(t){
+    var places = placesForTrip(t.id).filter(function(p){ return p.status==="visited"; });
+    if(!places.length) return '<div class="panel"><p class="empty">Mark a place on this trip as visited to review it here.</p></div>';
+    return '<div class="panel"><div class="stack">'+places.map(function(p){
+      return '<div class="row" data-trv-open-place="'+p.id+'" style="cursor:pointer">'+
+        catIconHTML(p.name, placeCategoryMeta(p.category).color)+
+        '<div class="main"><div class="title">'+esc(p.name)+(p.rating?' <span style="color:var(--gold);font-weight:600">'+p.rating+'/5</span>':"")+'</div>'+
+        '<div class="meta">'+(p.reviewText?esc(p.reviewText.slice(0,80)):"No review written yet")+'</div></div>'+
+      '</div>';
+    }).join("")+'</div></div>';
+  }
+
+  function travelTripExpensesHTML(t){
+    var list = state.expenses.filter(function(e){ return e.tripId===t.id; }).slice().sort(byDateDesc);
+    var total = list.reduce(function(s,e){ return s+Number(e.amount||0); },0);
+    var html = '<div class="hero-stat"><div><div class="hero-label">Trip spending</div><div class="hero-num">'+money(total)+'</div>'+
+      (t.budget ? '<div class="hero-sub">of '+money(t.budget)+' budget</div>' : '<div class="hero-sub">'+list.length+' expense'+(list.length===1?"":"s")+'</div>')+'</div></div>';
+    if(t.budget){
+      var pct = Math.min(100, Math.round(total/t.budget*100));
+      html += '<span class="bar-track" style="width:100%;display:block;margin:-6px 0 16px"><span class="bar-fill" style="width:'+pct+'%;background:'+(pct>=100?"var(--bad)":"var(--teal)")+';display:block"></span></span>';
+    }
+    html += '<div class="panel add-block" style="--accent:var(--ember)"><div class="panel-head"><h2>Add expense</h2></div>'+
+      '<form class="stack" id="trv-expense-form" data-trv-trip-id="'+t.id+'">'+
+        '<div class="field-row">'+
+          '<label class="f">Amount<input type="number" step="0.01" min="0" id="trv-exp-amount" placeholder="0.00" required></label>'+
+          '<div class="f">Date<input type="hidden" id="trv-exp-date" value="'+todayISO()+'" data-picker="date"></div>'+
+        '</div>'+
+        '<div class="f">Category<select id="trv-exp-category" data-picker="select">'+PRESET_CATS.map(function(c){ return '<option value="'+c+'">'+c+'</option>'; }).join("")+'</select></div>'+
+        '<label class="f">Note (optional)<input type="text" id="trv-exp-note" placeholder="Add a note..."></label>'+
+        '<button class="btn btn-primary" type="submit">Add expense</button>'+
+      '</form></div>';
+    html += '<div class="panel"><div class="panel-head"><h2>Trip expenses</h2></div>'+
+      (list.length ? '<div class="stack">'+list.map(function(e){
+        return '<div class="row">'+catIconHTML(e.category||"Other", colorForCategory(e.category||"Other"))+
+          '<div class="main"><div class="title">'+esc(e.category||"Other")+(e.note?" — "+esc(e.note):"")+'</div><div class="meta">'+fmtShort(e.date)+'</div></div>'+
+          '<span class="bar-val">'+money(Number(e.amount||0))+'</span>'+
+        '</div>';
+      }).join("")+'</div>' : '<p class="empty">No expenses logged for this trip yet.</p>')+
+    '</div>';
+    return html;
+  }
+
+  function travelTripNotesHTML(t){
+    return '<div class="panel"><div class="panel-head"><h2>Trip notes</h2></div>'+
+      '<textarea class="note-textarea" id="trv-trip-notes" rows="8" data-trv-notes-trip="'+t.id+'" placeholder="Planning notes, packing list, things to remember...">'+esc(t.notes||"")+'</textarea>'+
+    '</div>';
+  }
+
+  /* ============ TRAVEL: place detail ============ */
+  var TRAVEL_PLACE_TABS = [["overview","Overview"],["photos","Photos"],["reviews","Reviews"],["itinerary","Itinerary"],["map","Map"]];
+  function travelPlaceDetailHTML(id){
+    var p = placeById(id);
+    if(!p){ travelPage="places"; travelPlaceId=null; return travelPlacesPageHTML(); }
+    var cat = placeCategoryMeta(p.category);
+    var meta = [p.city, countryName(p.countryCode)].filter(Boolean).join(", ");
+    var sMeta = placeStatusMeta(p.status);
+
+    var placeLetter = esc(String(p.name||cat.label).trim().charAt(0).toUpperCase()||"?");
+    var head = '<button type="button" class="cal-back-btn" data-trv-back-places>&larr; All places</button>'+
+      '<div class="chal-detail-head" style="margin-top:8px">'+
+        '<span class="cat-icon" style="background:'+cat.color+';width:52px;height:52px;border-radius:14px;font-size:1.3rem">'+placeLetter+'</span>'+
+        '<div style="flex:1;min-width:200px"><h2 style="margin:0 0 4px">'+esc(p.name)+(p.favorite?' <span style="color:var(--ember)">&#9733;</span>':"")+'</h2>'+
+        '<div class="meta">'+esc(cat.label)+(meta?" · "+esc(meta):"")+'</div></div>'+
+        '<span class="chal-badge" style="color:'+sMeta.color+';border-color:'+sMeta.color+'">'+sMeta.label+'</span>'+
+        '<button type="button" class="btn-ghost" data-trv-edit-place="'+p.id+'" title="Edit">&#9998;</button>'+
+      '</div>';
+
+    var tabsHTML = '<div class="cal-subtabs">'+TRAVEL_PLACE_TABS.map(function(tb){
+      return '<button type="button" class="cal-subtab'+(travelPlaceTab===tb[0]?" active":"")+'" data-trv-place-tab="'+tb[0]+'">'+tb[1]+'</button>';
+    }).join("")+'</div>';
+
+    var body;
+    switch(travelPlaceTab){
+      case "photos": body = travelPlacePhotosHTML(p); break;
+      case "reviews": body = travelPlaceReviewsHTML(p); break;
+      case "itinerary": body = travelPlaceItineraryHTML(p); break;
+      case "map": body = travelPlaceMapHTML(p); break;
+      default: body = travelPlaceOverviewHTML(p);
+    }
+    var modals = travelShowAddPlace ? travelPlaceModalHTML() : "";
+    return head + tabsHTML + body + modals;
+  }
+
+  function travelPlaceOverviewHTML(p){
+    var trips = tripsForPlace(p.id);
+    var html = '';
+    if(p.address) html += '<div class="panel"><div class="panel-head"><h2>Address</h2></div><p style="font-size:.88rem;color:var(--ink-soft)">'+esc(p.address)+'</p></div>';
+    if(p.note) html += '<div class="panel"><div class="panel-head"><h2>Notes</h2></div><p style="white-space:pre-wrap;font-size:.88rem;color:var(--ink-soft)">'+esc(p.note)+'</p></div>';
+    if(p.tags && p.tags.length) html += '<div class="panel"><div class="panel-head"><h2>Tags</h2></div><div class="chip-row">'+p.tags.map(function(tg){ return '<span class="chip">'+esc(tg)+'</span>'; }).join("")+'</div></div>';
+    html += '<div class="panel"><div class="panel-head"><h2>On these trips</h2></div>'+
+      (trips.length ? '<div class="stack">'+trips.map(tripRowHTML).join("")+'</div>' : '<p class="empty">Not linked to a trip — this is a saved place / bucket-list item.</p>')+
+    '</div>';
+    return html;
+  }
+  function travelPlacePhotosHTML(p){
+    var photos = photosForPlace(p.id);
+    return '<div class="panel"><div class="panel-head"><h2>Photos</h2>'+
+      '<label class="btn btn-primary" style="background:var(--teal);cursor:pointer">+ Add photo<input type="file" accept="image/*" id="trv-photo-input" data-trv-photo-place="'+p.id+'" style="display:none"></label>'+
+      '</div>'+
+      (photos.length ? '<div class="trv-photo-grid">'+photos.map(function(ph){
+        return '<div class="trv-photo-cell"><img src="'+ph.dataUrl+'" alt=""><button type="button" class="trv-photo-del" data-trv-del-photo="'+ph.id+'" title="Delete">&times;</button></div>';
+      }).join("")+'</div>' : '<p class="empty">No photos yet.</p>')+
+    '</div>';
+  }
+  function travelPlaceReviewsHTML(p){
+    return '<div class="panel"><div class="panel-head"><h2>Your review</h2></div>'+
+      '<form class="stack" id="trv-review-form" data-trv-review-place="'+p.id+'">'+
+        '<label class="f">Rating (1–5)<input type="number" min="1" max="5" id="trv-review-rating" value="'+(p.rating!=null?p.rating:"")+'"></label>'+
+        '<label class="f">Review<textarea id="trv-review-text" rows="4" placeholder="What did you think?">'+esc(p.reviewText||"")+'</textarea></label>'+
+        '<div class="f">Date<input type="hidden" id="trv-review-date" value="'+esc(p.reviewDate||todayISO())+'" data-picker="date"></div>'+
+        '<button class="btn btn-primary" type="submit">Save review</button>'+
+      '</form>'+
+    '</div>';
+  }
+  function travelPlaceItineraryHTML(p){
+    var items = state.travel.itinerary.filter(function(it){ return it.placeId===p.id; });
+    if(!items.length) return '<div class="panel"><p class="empty">Not scheduled in any trip itinerary yet.</p></div>';
+    return '<div class="panel"><div class="stack">'+items.map(function(it){
+      var t = tripById(it.tripId);
+      var d = t ? tripDayDate(t, it.dayIndex) : null;
+      return '<div class="row"'+(t?' data-trv-open-trip="'+t.id+'" style="cursor:pointer"':"")+'>'+
+        catIconHTML(itineraryTypeLabel(it.type), "var(--teal)")+
+        '<div class="main"><div class="title">'+esc(it.title||itineraryTypeLabel(it.type))+'</div><div class="meta">'+(t?esc(t.name):"")+(d?" · "+fmtShort(d):"")+'</div></div>'+
+      '</div>';
+    }).join("")+'</div></div>';
+  }
+  function travelPlaceMapHTML(p){
+    if(!p.countryCode || !COUNTRY_CENTROIDS[p.countryCode]) return '<div class="panel"><p class="empty">No country set for this place yet.</p></div>';
+    var c = COUNTRY_CENTROIDS[p.countryCode];
+    var xy = trvProject(c[0], c[1]);
+    var mapSvg = '<svg viewBox="0 0 '+TRAVEL_MAP_W+' '+TRAVEL_MAP_H+'" class="trv-map-svg">'+
+      travelBlobsSVG()+
+      '<g transform="translate('+xy.x.toFixed(1)+','+xy.y.toFixed(1)+')"><circle r="10" fill="'+placeStatusMeta(p.status).color+'" stroke="#fff" stroke-width="2"/></g>'+
+    '</svg>';
+    return '<div class="panel"><div class="panel-head"><h2>'+esc(countryName(p.countryCode))+'</h2></div>'+
+      '<p class="hint" style="margin:-6px 0 12px">Approximate country location, not an exact address.</p>'+
+      '<div class="trv-map-wrap">'+mapSvg+'</div>'+
+    '</div>';
+  }
+
+  function travelCloseModals(){
+    travelShowAddTrip=false; travelEditingTripId=null; travelPendingCoverImage=null;
+    travelShowAddPlace=false; travelEditingPlaceId=null; travelAddPlaceTripId=null; travelPendingPlaceCoverImage=null;
+    travelShowAddItinerary=false; travelEditingItineraryId=null;
+  }
+
+  /* ============ TRAVEL: add/edit modals ============ */
+  function travelCountrySelectHTML(id, selected){
+    var codes = Object.keys(COUNTRY_CENTROIDS).sort(function(a,b){ return countryName(a).localeCompare(countryName(b)); });
+    return '<select id="'+id+'" data-picker="select"><option value="">Not set</option>'+
+      codes.map(function(cc){ return '<option value="'+cc+'"'+(selected===cc?" selected":"")+'>'+esc(countryName(cc))+'</option>'; }).join("")+
+    '</select>';
+  }
+
+  function travelTripModalHTML(){
+    var editing = travelEditingTripId ? tripById(travelEditingTripId) : null;
+    var v = editing || {};
+    var color = v.color || "var(--teal)";
+    var coverImg = travelPendingCoverImage || v.coverImage || null;
+    return '<div class="modal-backdrop" data-trv-modal-backdrop><div class="modal-card">'+
+      '<div class="panel-head"><h2>'+(editing?"Edit trip":"Add trip")+'</h2></div>'+
+      '<form id="trv-trip-form" class="stack">'+
+        '<label class="f">Trip name<input type="text" id="trv-trip-name" value="'+esc(v.name||"")+'" placeholder="e.g. Two weeks in Japan" required></label>'+
+        '<div class="field-row">'+
+          '<div class="f">Country'+travelCountrySelectHTML("trv-trip-country", v.countryCode||"")+'</div>'+
+          '<label class="f">City (optional)<input type="text" id="trv-trip-city" value="'+esc(v.city||"")+'"></label>'+
+        '</div>'+
+        '<div class="field-row">'+
+          '<div class="f">Start date<input type="hidden" id="trv-trip-start" value="'+esc(v.startDate||"")+'" data-picker="date"></div>'+
+          '<div class="f">End date<input type="hidden" id="trv-trip-end" value="'+esc(v.endDate||"")+'" data-picker="date"></div>'+
+        '</div>'+
+        '<div class="field-row">'+
+          '<label class="f">Traveling with (optional)<input type="text" id="trv-trip-companions" value="'+esc(v.companions||"")+'" placeholder="e.g. Sam, Priya"></label>'+
+          '<label class="f">Budget (optional)<input type="number" step="0.01" min="0" id="trv-trip-budget" value="'+(v.budget!=null?v.budget:"")+'"></label>'+
+        '</div>'+
+        '<label class="f">Color<div class="swatch-row" id="trv-trip-color-row" data-selected="'+esc(color)+'">'+
+          STUDY_COLOR_PALETTE.map(function(cItem){ return '<button type="button" class="color-swatch'+(color===cItem.var?" active":"")+'" data-trv-trip-color="'+esc(cItem.var)+'" style="background:'+cItem.var+'"></button>'; }).join("")+
+        '</div></label>'+
+        '<label class="f">Cover photo (optional)<input type="file" accept="image/*" id="trv-trip-cover-input"></label>'+
+        (coverImg ? '<img src="'+coverImg+'" style="max-width:140px;border-radius:10px;margin-top:-4px">' : "")+
+        '<label class="chk-f"><input type="checkbox" id="trv-trip-cal-linked"'+(v.calendarLinked!==false?" checked":"")+'> Show itinerary on Calendar</label>'+
+        '<div class="modal-actions">'+
+          (editing?'<button type="button" class="btn-ghost" data-trv-delete-trip="'+editing.id+'" style="color:var(--bad);margin-right:auto">Delete</button>':'')+
+          '<button type="button" class="btn-ghost" data-trv-modal-cancel>Cancel</button>'+
+          '<button type="submit" class="btn btn-primary" style="background:var(--teal)">'+(editing?"Save changes":"Create trip")+'</button>'+
+        '</div>'+
+      '</form>'+
+    '</div></div>';
+  }
+
+  function travelPlaceModalHTML(){
+    var editing = travelEditingPlaceId ? placeById(travelEditingPlaceId) : null;
+    var v = editing || {};
+    var cat = v.category || "restaurant";
+    var status = v.status || "saved";
+    var coverImg = travelPendingPlaceCoverImage || v.coverImage || null;
+    var catPills = PLACE_CATEGORIES.map(function(c){
+      return '<button type="button" class="subject-pill'+(cat===c.id?" active":"")+'" data-trv-place-category="'+c.id+'" style="'+(cat===c.id?"background:"+c.color+";border-color:"+c.color+";color:#fff":"")+'">'+esc(c.label)+'</button>';
+    }).join("");
+    var statusBtns = ["saved","planned","visited"].map(function(s){
+      var m = placeStatusMeta(s);
+      return '<button type="button" class="subject-pill'+(status===s?" active":"")+'" data-trv-place-status="'+s+'" style="'+(status===s?"background:"+m.color+";border-color:"+m.color+";color:#fff":"")+'">'+esc(m.label)+'</button>';
+    }).join("");
+    return '<div class="modal-backdrop" data-trv-modal-backdrop><div class="modal-card">'+
+      '<div class="panel-head"><h2>'+(editing?"Edit place":"Add place")+'</h2></div>'+
+      '<form id="trv-place-form" class="stack">'+
+        '<label class="f">Name<input type="text" id="trv-place-name" value="'+esc(v.name||"")+'" placeholder="e.g. Tsukiji Outer Market" required></label>'+
+        '<label class="f">Category</label>'+
+        '<div class="swatch-row" id="trv-place-cat-row" data-selected="'+cat+'" style="flex-wrap:wrap">'+catPills+'</div>'+
+        '<div class="field-row">'+
+          '<div class="f">Country'+travelCountrySelectHTML("trv-place-country", v.countryCode||"")+'</div>'+
+          '<label class="f">City (optional)<input type="text" id="trv-place-city" value="'+esc(v.city||"")+'"></label>'+
+        '</div>'+
+        '<label class="f">Address (optional)<input type="text" id="trv-place-address" value="'+esc(v.address||"")+'"></label>'+
+        '<label class="f">Status</label>'+
+        '<div class="swatch-row" id="trv-place-status-row" data-selected="'+status+'">'+statusBtns+'</div>'+
+        '<label class="chk-f"><input type="checkbox" id="trv-place-favorite"'+(v.favorite?" checked":"")+'> Favorite</label>'+
+        '<label class="f">Tags (comma separated, optional)<input type="text" id="trv-place-tags" value="'+esc((v.tags||[]).join(", "))+'"></label>'+
+        '<label class="f">Notes (optional)<textarea id="trv-place-note" rows="2">'+esc(v.note||"")+'</textarea></label>'+
+        '<label class="f">Cover photo (optional)<input type="file" accept="image/*" id="trv-place-cover-input"></label>'+
+        (coverImg ? '<img src="'+coverImg+'" style="max-width:140px;border-radius:10px;margin-top:-4px">' : "")+
+        '<div class="modal-actions">'+
+          (editing?'<button type="button" class="btn-ghost" data-trv-delete-place="'+editing.id+'" style="color:var(--bad);margin-right:auto">Delete</button>':'')+
+          '<button type="button" class="btn-ghost" data-trv-modal-cancel>Cancel</button>'+
+          '<button type="submit" class="btn btn-primary" style="background:var(--teal)">'+(editing?"Save changes":"Add place")+'</button>'+
+        '</div>'+
+      '</form>'+
+    '</div></div>';
+  }
+
+  function travelItineraryModalHTML(){
+    var editing = travelEditingItineraryId ? state.travel.itinerary.filter(function(it){ return it.id===travelEditingItineraryId; })[0] : null;
+    var v = editing || {};
+    var type = v.type || "activity";
+    var allPlaces = state.travel.places.slice().sort(function(a,b){ return (a.name||"").localeCompare(b.name||""); });
+    var placeOptions = '<option value="">No place linked</option>'+allPlaces.map(function(p){ return '<option value="'+p.id+'"'+(v.placeId===p.id?" selected":"")+'>'+esc(p.name)+'</option>'; }).join("");
+    return '<div class="modal-backdrop" data-trv-modal-backdrop><div class="modal-card">'+
+      '<div class="panel-head"><h2>'+(editing?"Edit itinerary item":"Add itinerary item")+'</h2></div>'+
+      '<form id="trv-itinerary-form" class="stack">'+
+        '<div class="f">Type<select id="trv-it-type" data-picker="select">'+ITINERARY_TYPES.map(function(t){ return '<option value="'+t.id+'"'+(type===t.id?" selected":"")+'>'+esc(t.label)+'</option>'; }).join("")+'</select></div>'+
+        '<label class="f">Title<input type="text" id="trv-it-title" value="'+esc(v.title||"")+'" placeholder="e.g. Check in at hotel"></label>'+
+        '<div class="field-row">'+
+          '<div class="f">Start time<input type="hidden" id="trv-it-time" value="'+esc(v.time||"")+'" data-picker="time"></div>'+
+          '<div class="f">End time<input type="hidden" id="trv-it-endtime" value="'+esc(v.endTime||"")+'" data-picker="time"></div>'+
+        '</div>'+
+        '<div class="f">Linked place (optional)<select id="trv-it-place" data-picker="select">'+placeOptions+'</select></div>'+
+        '<label class="f">Cost (optional)<input type="number" step="0.01" min="0" id="trv-it-cost" value="'+(v.cost!=null?v.cost:"")+'"></label>'+
+        '<label class="f">Notes (optional)<textarea id="trv-it-notes" rows="2">'+esc(v.notes||"")+'</textarea></label>'+
+        '<div class="modal-actions">'+
+          (editing?'<button type="button" class="btn-ghost" data-trv-delete-itinerary="'+editing.id+'" style="color:var(--bad);margin-right:auto">Delete</button>':'')+
+          '<button type="button" class="btn-ghost" data-trv-modal-cancel>Cancel</button>'+
+          '<button type="submit" class="btn btn-primary" style="background:var(--teal)">'+(editing?"Save changes":"Add item")+'</button>'+
+        '</div>'+
+      '</form>'+
+    '</div></div>';
+  }
+
   /* ============ render dispatch + wiring ============ */
-  var RENDERERS = { home:renderHome, today:renderToday, calendar:renderCalendar, habits:renderHabits, expenses:renderExpenses, workouts:renderWorkouts, library:renderLibrary, studying:renderStudying, challenges:renderChallenges, body:renderBody };
+  var RENDERERS = { home:renderHome, today:renderToday, calendar:renderCalendar, habits:renderHabits, expenses:renderExpenses, workouts:renderWorkouts, library:renderLibrary, studying:renderStudying, challenges:renderChallenges, body:renderBody, travel:renderTravel };
 
   function renderViews(){
     var mount = document.getElementById("views");
@@ -8491,6 +9530,11 @@
 
   function wireView(tab){
     if(tab==="today"){
+      var todayOpenTripBtn = document.querySelector("[data-today-open-trip]");
+      if(todayOpenTripBtn) todayOpenTripBtn.addEventListener("click", function(){
+        travelTripId = todayOpenTripBtn.getAttribute("data-today-open-trip"); travelPage="trip"; travelTripTab="overview"; travelTripDay=0;
+        goToTab("travel");
+      });
       /* ---- date browsing + View calendar ---- */
       Array.prototype.forEach.call(document.querySelectorAll("[data-today-daynav]"), function(btn){
         btn.addEventListener("click", function(){
@@ -8929,6 +9973,18 @@
           var today = todayISO();
           if(h.logs[today]) delete h.logs[today]; else h.logs[today]=true;
           save(); renderViews();
+        });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-home-trip]"), function(btn){
+        btn.addEventListener("click", function(){
+          travelTripId = btn.getAttribute("data-home-trip"); travelPage="trip"; travelTripTab="overview"; travelTripDay=0;
+          goToTab("travel");
+        });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-home-place]"), function(btn){
+        btn.addEventListener("click", function(){
+          travelPlaceId = btn.getAttribute("data-home-place"); travelPage="place"; travelPlaceTab="overview";
+          goToTab("travel");
         });
       });
       Array.prototype.forEach.call(document.querySelectorAll("[data-home-cal-date]"), function(btn){
@@ -10858,6 +11914,393 @@
       var bodyRecSourceFilter = document.getElementById("body-rec-source-filter");
       if(bodyRecSourceFilter) bodyRecSourceFilter.addEventListener("change", function(){
         bodyRecordsSourceFilter = bodyRecSourceFilter.value; renderViews();
+      });
+    }
+
+    if(tab==="travel"){
+      function num(id){ var el=document.getElementById(id); return (el && el.value!=="") ? Number(el.value) : null; }
+      function txt(id){ var el=document.getElementById(id); return el ? el.value.trim() : ""; }
+
+      /* ---- top-level + detail navigation ---- */
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-page]"), function(btn){
+        btn.addEventListener("click", function(){ travelPage = btn.getAttribute("data-trv-page"); travelMapSelected=null; renderViews(); });
+      });
+      var trvBackTrips = document.querySelector("[data-trv-back-trips]");
+      if(trvBackTrips) trvBackTrips.addEventListener("click", function(){ travelPage="trips"; travelTripId=null; renderViews(); });
+      var trvBackPlaces = document.querySelector("[data-trv-back-places]");
+      if(trvBackPlaces) trvBackPlaces.addEventListener("click", function(){ travelPage="places"; travelPlaceId=null; renderViews(); });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-open-trip]"), function(el){
+        el.addEventListener("click", function(){ travelTripId = el.getAttribute("data-trv-open-trip"); travelPage="trip"; travelTripTab="overview"; travelTripDay=0; renderViews(); });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-open-itinerary]"), function(el){
+        el.addEventListener("click", function(){ travelTripId = el.getAttribute("data-trv-open-itinerary"); travelPage="trip"; travelTripTab="itinerary"; travelTripDay=0; renderViews(); });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-open-place]"), function(el){
+        el.addEventListener("click", function(ev){
+          if(ev.target.closest("[data-trv-unlink-place]")) return;
+          travelPlaceId = el.getAttribute("data-trv-open-place"); travelPage="place"; travelPlaceTab="overview"; renderViews();
+        });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-trip-tab]"), function(btn){
+        btn.addEventListener("click", function(){ travelTripTab = btn.getAttribute("data-trv-trip-tab"); renderViews(); });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-trip-tab-go]"), function(btn){
+        btn.addEventListener("click", function(){ travelTripTab = btn.getAttribute("data-trv-trip-tab-go"); renderViews(); });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-place-tab]"), function(btn){
+        btn.addEventListener("click", function(){ travelPlaceTab = btn.getAttribute("data-trv-place-tab"); renderViews(); });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-trip-day]"), function(btn){
+        btn.addEventListener("click", function(){ travelTripDay = Number(btn.getAttribute("data-trv-trip-day")); renderViews(); });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-edit-trip]"), function(btn){
+        btn.addEventListener("click", function(){
+          travelEditingTripId = btn.getAttribute("data-trv-edit-trip"); travelPendingCoverImage=null; travelShowAddTrip=true; renderViews();
+        });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-edit-place]"), function(btn){
+        btn.addEventListener("click", function(){
+          travelEditingPlaceId = btn.getAttribute("data-trv-edit-place"); travelPendingPlaceCoverImage=null; travelShowAddPlace=true; renderViews();
+        });
+      });
+
+      /* ---- Add trip ---- */
+      var trvNewTripBtn = document.querySelector("[data-trv-new-trip]");
+      if(trvNewTripBtn) trvNewTripBtn.addEventListener("click", function(){
+        travelEditingTripId=null; travelPendingCoverImage=null; travelShowAddTrip=true; renderViews();
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-trip-color]"), function(sw){
+        sw.addEventListener("click", function(){
+          var row = document.getElementById("trv-trip-color-row");
+          if(!row) return;
+          Array.prototype.forEach.call(row.querySelectorAll(".color-swatch"), function(x){ x.classList.remove("active"); });
+          sw.classList.add("active");
+          row.setAttribute("data-selected", sw.getAttribute("data-trv-trip-color"));
+        });
+      });
+      var trvTripCoverInput = document.getElementById("trv-trip-cover-input");
+      if(trvTripCoverInput) trvTripCoverInput.addEventListener("change", function(){
+        var file = trvTripCoverInput.files && trvTripCoverInput.files[0];
+        if(!file) return;
+        var reader = new FileReader();
+        reader.onload = function(e){
+          var img = new Image();
+          img.onload = function(){
+            var maxDim = 480, scale = Math.min(1, maxDim/Math.max(img.width,img.height));
+            var w = Math.max(1,Math.round(img.width*scale)), h = Math.max(1,Math.round(img.height*scale));
+            var canvas = document.createElement("canvas"); canvas.width=w; canvas.height=h;
+            canvas.getContext("2d").drawImage(img,0,0,w,h);
+            travelPendingCoverImage = canvas.toDataURL("image/jpeg", 0.75);
+            renderViews();
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+      var trvTripForm = document.getElementById("trv-trip-form");
+      if(trvTripForm) trvTripForm.addEventListener("submit", function(ev){
+        ev.preventDefault();
+        var name = txt("trv-trip-name");
+        if(!name) return;
+        var colorRow = document.getElementById("trv-trip-color-row");
+        var editingTrip = travelEditingTripId ? tripById(travelEditingTripId) : null;
+        var payload = {
+          name: name,
+          countryCode: txt("trv-trip-country"),
+          city: txt("trv-trip-city"),
+          startDate: txt("trv-trip-start"),
+          endDate: txt("trv-trip-end"),
+          companions: txt("trv-trip-companions"),
+          budget: num("trv-trip-budget"),
+          color: colorRow ? (colorRow.getAttribute("data-selected")||"var(--teal)") : "var(--teal)",
+          calendarLinked: document.getElementById("trv-trip-cal-linked").checked,
+          updatedAt: todayISO()
+        };
+        if(travelPendingCoverImage) payload.coverImage = travelPendingCoverImage;
+        if(editingTrip){
+          Object.assign(editingTrip, payload);
+        } else {
+          var created = normalizeTrip(Object.assign({ id:uid(), createdAt:todayISO(), order:state.travel.trips.length }, payload), state.travel.trips.length);
+          state.travel.trips.push(created);
+          travelTripId = created.id; travelPage="trip"; travelTripTab="overview";
+        }
+        travelCloseModals();
+        save(); setTimeout(renderViews,0);
+      });
+      var trvDeleteTripBtn = document.querySelector("[data-trv-delete-trip]");
+      if(trvDeleteTripBtn) trvDeleteTripBtn.addEventListener("click", function(){
+        var id = trvDeleteTripBtn.getAttribute("data-trv-delete-trip");
+        state.travel.trips = state.travel.trips.filter(function(t){ return t.id!==id; });
+        state.travel.tripPlaces = state.travel.tripPlaces.filter(function(tp){ return tp.tripId!==id; });
+        state.travel.itinerary = state.travel.itinerary.filter(function(it){ return it.tripId!==id; });
+        state.travel.photos = state.travel.photos.filter(function(ph){ return ph.tripId!==id; });
+        travelCloseModals();
+        if(travelTripId===id){ travelPage="trips"; travelTripId=null; }
+        save(); setTimeout(renderViews,0);
+      });
+
+      /* ---- Add place ---- */
+      var trvNewPlaceBtn = document.querySelector("[data-trv-new-place]");
+      if(trvNewPlaceBtn) trvNewPlaceBtn.addEventListener("click", function(){
+        travelEditingPlaceId=null; travelAddPlaceTripId=null; travelPendingPlaceCoverImage=null; travelShowAddPlace=true; renderViews();
+      });
+      var trvNewPlaceForTripBtn = document.querySelector("[data-trv-new-place-for-trip]");
+      if(trvNewPlaceForTripBtn) trvNewPlaceForTripBtn.addEventListener("click", function(){
+        travelEditingPlaceId=null; travelAddPlaceTripId = trvNewPlaceForTripBtn.getAttribute("data-trv-new-place-for-trip");
+        travelPendingPlaceCoverImage=null; travelShowAddPlace=true; renderViews();
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-place-category]"), function(sw){
+        sw.addEventListener("click", function(){
+          var row = document.getElementById("trv-place-cat-row");
+          if(!row) return;
+          var newCat = sw.getAttribute("data-trv-place-category");
+          var m = placeCategoryMeta(newCat);
+          Array.prototype.forEach.call(row.querySelectorAll(".subject-pill"), function(x){ x.classList.remove("active"); x.style.background=""; x.style.borderColor=""; x.style.color=""; });
+          sw.classList.add("active"); sw.style.background=m.color; sw.style.borderColor=m.color; sw.style.color="#fff";
+          row.setAttribute("data-selected", newCat);
+        });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-place-status]"), function(sw){
+        sw.addEventListener("click", function(){
+          var row = document.getElementById("trv-place-status-row");
+          if(!row) return;
+          var newStatus = sw.getAttribute("data-trv-place-status");
+          var m = placeStatusMeta(newStatus);
+          Array.prototype.forEach.call(row.querySelectorAll(".subject-pill"), function(x){ x.classList.remove("active"); x.style.background=""; x.style.borderColor=""; x.style.color=""; });
+          sw.classList.add("active"); sw.style.background=m.color; sw.style.borderColor=m.color; sw.style.color="#fff";
+          row.setAttribute("data-selected", newStatus);
+        });
+      });
+      var trvPlaceCoverInput = document.getElementById("trv-place-cover-input");
+      if(trvPlaceCoverInput) trvPlaceCoverInput.addEventListener("change", function(){
+        var file = trvPlaceCoverInput.files && trvPlaceCoverInput.files[0];
+        if(!file) return;
+        var reader = new FileReader();
+        reader.onload = function(e){
+          var img = new Image();
+          img.onload = function(){
+            var maxDim = 480, scale = Math.min(1, maxDim/Math.max(img.width,img.height));
+            var w = Math.max(1,Math.round(img.width*scale)), h = Math.max(1,Math.round(img.height*scale));
+            var canvas = document.createElement("canvas"); canvas.width=w; canvas.height=h;
+            canvas.getContext("2d").drawImage(img,0,0,w,h);
+            travelPendingPlaceCoverImage = canvas.toDataURL("image/jpeg", 0.75);
+            renderViews();
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+      var trvPlaceForm = document.getElementById("trv-place-form");
+      if(trvPlaceForm) trvPlaceForm.addEventListener("submit", function(ev){
+        ev.preventDefault();
+        var name = txt("trv-place-name");
+        if(!name) return;
+        var catRow = document.getElementById("trv-place-cat-row");
+        var statusRow = document.getElementById("trv-place-status-row");
+        var editingPlace = travelEditingPlaceId ? placeById(travelEditingPlaceId) : null;
+        var tagsRaw = txt("trv-place-tags");
+        var payload = {
+          name: name,
+          category: catRow ? (catRow.getAttribute("data-selected")||"other") : "other",
+          countryCode: txt("trv-place-country"),
+          city: txt("trv-place-city"),
+          address: txt("trv-place-address"),
+          status: statusRow ? (statusRow.getAttribute("data-selected")||"saved") : "saved",
+          favorite: document.getElementById("trv-place-favorite").checked,
+          tags: tagsRaw ? tagsRaw.split(",").map(function(s){ return s.trim(); }).filter(Boolean) : [],
+          note: txt("trv-place-note"),
+          updatedAt: todayISO()
+        };
+        if(travelPendingPlaceCoverImage) payload.coverImage = travelPendingPlaceCoverImage;
+        var savedPlace;
+        if(editingPlace){
+          Object.assign(editingPlace, payload);
+          savedPlace = normalizePlace(editingPlace);
+          Object.assign(editingPlace, savedPlace);
+        } else {
+          savedPlace = normalizePlace(Object.assign({ id:uid(), createdAt:todayISO() }, payload));
+          state.travel.places.push(savedPlace);
+          if(travelAddPlaceTripId && !tripPlaceFor(travelAddPlaceTripId, savedPlace.id)){
+            state.travel.tripPlaces.push(normalizeTripPlace({ id:uid(), tripId:travelAddPlaceTripId, placeId:savedPlace.id, dayIndex:null, order:tripPlacesForTrip(travelAddPlaceTripId).length, createdAt:todayISO() }));
+          }
+        }
+        travelCloseModals();
+        save(); setTimeout(renderViews,0);
+      });
+      var trvDeletePlaceBtn = document.querySelector("[data-trv-delete-place]");
+      if(trvDeletePlaceBtn) trvDeletePlaceBtn.addEventListener("click", function(){
+        var id = trvDeletePlaceBtn.getAttribute("data-trv-delete-place");
+        state.travel.places = state.travel.places.filter(function(p){ return p.id!==id; });
+        state.travel.tripPlaces = state.travel.tripPlaces.filter(function(tp){ return tp.placeId!==id; });
+        state.travel.itinerary.forEach(function(it){ if(it.placeId===id) it.placeId=null; });
+        state.travel.photos = state.travel.photos.filter(function(ph){ return ph.placeId!==id; });
+        travelCloseModals();
+        if(travelPlaceId===id){ travelPage="places"; travelPlaceId=null; }
+        save(); setTimeout(renderViews,0);
+      });
+
+      /* ---- Places filters ---- */
+      var trvPlacesSearch = document.getElementById("trv-places-search");
+      if(trvPlacesSearch) trvPlacesSearch.addEventListener("input", function(){ travelSearchQuery = trvPlacesSearch.value; setTimeout(renderViews,0); });
+      var trvFilterCategory = document.getElementById("trv-filter-category");
+      if(trvFilterCategory) trvFilterCategory.addEventListener("change", function(){ travelPlacesFilter.category = trvFilterCategory.value; renderViews(); });
+      var trvFilterStatus = document.getElementById("trv-filter-status");
+      if(trvFilterStatus) trvFilterStatus.addEventListener("change", function(){ travelPlacesFilter.status = trvFilterStatus.value; renderViews(); });
+      var trvFilterCountry = document.getElementById("trv-filter-country");
+      if(trvFilterCountry) trvFilterCountry.addEventListener("change", function(){ travelPlacesFilter.country = trvFilterCountry.value; renderViews(); });
+
+      /* ---- Map ---- */
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-map-marker]"), function(el){
+        el.addEventListener("click", function(){
+          var cc = el.getAttribute("data-trv-map-marker");
+          travelMapSelected = (travelMapSelected===cc) ? null : cc;
+          renderViews();
+        });
+      });
+      var trvMapClose = document.querySelector("[data-trv-map-close]");
+      if(trvMapClose) trvMapClose.addEventListener("click", function(){ travelMapSelected=null; renderViews(); });
+
+      /* ---- Trip > Places: link / unlink existing places ---- */
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-unlink-place]"), function(btn){
+        btn.addEventListener("click", function(ev){
+          ev.stopPropagation();
+          var parts = btn.getAttribute("data-trv-unlink-place").split("|");
+          state.travel.tripPlaces = state.travel.tripPlaces.filter(function(tp){ return !(tp.placeId===parts[0] && tp.tripId===parts[1]); });
+          save(); renderViews();
+        });
+      });
+      var trvLinkPlaceBtn = document.querySelector("[data-trv-link-place]");
+      if(trvLinkPlaceBtn) trvLinkPlaceBtn.addEventListener("click", function(){
+        var tripId = trvLinkPlaceBtn.getAttribute("data-trv-link-place");
+        var sel = document.getElementById("trv-link-place-select");
+        if(!sel || !sel.value) return;
+        state.travel.tripPlaces.push(normalizeTripPlace({ id:uid(), tripId:tripId, placeId:sel.value, dayIndex:null, order:tripPlacesForTrip(tripId).length, createdAt:todayISO() }));
+        save(); renderViews();
+      });
+
+      /* ---- Itinerary items ---- */
+      var trvNewItineraryBtn = document.querySelector("[data-trv-new-itinerary]");
+      if(trvNewItineraryBtn) trvNewItineraryBtn.addEventListener("click", function(){
+        travelEditingItineraryId=null; travelShowAddItinerary=true; renderViews();
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-edit-itinerary]"), function(el){
+        el.addEventListener("click", function(){ travelEditingItineraryId = el.getAttribute("data-trv-edit-itinerary"); travelShowAddItinerary=true; renderViews(); });
+      });
+      var trvItineraryForm = document.getElementById("trv-itinerary-form");
+      if(trvItineraryForm) trvItineraryForm.addEventListener("submit", function(ev){
+        ev.preventDefault();
+        var editingIt = travelEditingItineraryId ? state.travel.itinerary.filter(function(it){ return it.id===travelEditingItineraryId; })[0] : null;
+        var payload = {
+          type: txt("trv-it-type") || "other",
+          title: txt("trv-it-title"),
+          time: txt("trv-it-time"),
+          endTime: txt("trv-it-endtime"),
+          placeId: txt("trv-it-place") || null,
+          cost: num("trv-it-cost"),
+          notes: txt("trv-it-notes")
+        };
+        if(editingIt){
+          Object.assign(editingIt, payload);
+        } else {
+          var created = normalizeItineraryItem(Object.assign({ id:uid(), tripId:travelTripId, dayIndex:travelTripDay, order:itineraryForTripDay(travelTripId, travelTripDay).length, createdAt:todayISO() }, payload));
+          state.travel.itinerary.push(created);
+        }
+        travelCloseModals();
+        save(); setTimeout(renderViews,0);
+      });
+      var trvDeleteItineraryBtn = document.querySelector("[data-trv-delete-itinerary]");
+      if(trvDeleteItineraryBtn) trvDeleteItineraryBtn.addEventListener("click", function(){
+        var id = trvDeleteItineraryBtn.getAttribute("data-trv-delete-itinerary");
+        state.travel.itinerary = state.travel.itinerary.filter(function(it){ return it.id!==id; });
+        travelCloseModals();
+        save(); setTimeout(renderViews,0);
+      });
+
+      /* ---- Photos (trip or place context) ---- */
+      var trvPhotoInput = document.getElementById("trv-photo-input");
+      if(trvPhotoInput) trvPhotoInput.addEventListener("change", function(){
+        var file = trvPhotoInput.files && trvPhotoInput.files[0];
+        if(!file) return;
+        var forTripId = trvPhotoInput.getAttribute("data-trv-photo-trip") || "";
+        var forPlaceId = trvPhotoInput.getAttribute("data-trv-photo-place") || null;
+        var reader = new FileReader();
+        reader.onload = function(e){
+          var img = new Image();
+          img.onload = function(){
+            var maxDim = 640, scale = Math.min(1, maxDim/Math.max(img.width,img.height));
+            var w = Math.max(1,Math.round(img.width*scale)), h = Math.max(1,Math.round(img.height*scale));
+            var canvas = document.createElement("canvas"); canvas.width=w; canvas.height=h;
+            canvas.getContext("2d").drawImage(img,0,0,w,h);
+            var dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+            state.travel.photos.push(normalizeTravelPhoto({ id:uid(), tripId:forTripId, placeId:forPlaceId, dataUrl:dataUrl, date:todayISO(), createdAt:todayISO() }));
+            save(); renderViews();
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-del-photo]"), function(btn){
+        btn.addEventListener("click", function(){
+          var id = btn.getAttribute("data-trv-del-photo");
+          state.travel.photos = state.travel.photos.filter(function(ph){ return ph.id!==id; });
+          save(); renderViews();
+        });
+      });
+
+      /* ---- Trip notes + day journal (deferred re-render on blur, same "erasure bug" precaution
+         used by every other free-typing field in this app) ---- */
+      var trvTripNotes = document.getElementById("trv-trip-notes");
+      if(trvTripNotes) trvTripNotes.addEventListener("blur", function(){
+        var t = tripById(trvTripNotes.getAttribute("data-trv-notes-trip"));
+        if(!t) return;
+        t.notes = trvTripNotes.value; t.updatedAt = todayISO();
+        save(); setTimeout(renderViews,0);
+      });
+      var trvDayJournal = document.getElementById("trv-day-journal");
+      if(trvDayJournal) trvDayJournal.addEventListener("blur", function(){
+        var date = trvDayJournal.getAttribute("data-trv-journal-date");
+        if(!date) return;
+        state.dayNotes[date] = trvDayJournal.value;
+        save();
+      });
+
+      /* ---- Trip expenses ---- */
+      var trvExpenseForm = document.getElementById("trv-expense-form");
+      if(trvExpenseForm) trvExpenseForm.addEventListener("submit", function(ev){
+        ev.preventDefault();
+        var amount = num("trv-exp-amount");
+        if(amount==null || isNaN(amount)) return;
+        state.expenses.push({
+          id: uid(),
+          amount: amount,
+          date: txt("trv-exp-date") || todayISO(),
+          category: document.getElementById("trv-exp-category").value,
+          note: txt("trv-exp-note"),
+          tripId: trvExpenseForm.getAttribute("data-trv-trip-id")
+        });
+        save(); setTimeout(renderViews,0);
+      });
+
+      /* ---- Place review ---- */
+      var trvReviewForm = document.getElementById("trv-review-form");
+      if(trvReviewForm) trvReviewForm.addEventListener("submit", function(ev){
+        ev.preventDefault();
+        var p = placeById(trvReviewForm.getAttribute("data-trv-review-place"));
+        if(!p) return;
+        var rating = num("trv-review-rating");
+        p.rating = (rating!=null && rating>=1 && rating<=5) ? rating : null;
+        p.reviewText = txt("trv-review-text");
+        p.reviewDate = txt("trv-review-date") || todayISO();
+        p.updatedAt = todayISO();
+        save(); setTimeout(renderViews,0);
+      });
+
+      /* ---- generic modal close ---- */
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-modal-cancel]"), function(btn){
+        btn.addEventListener("click", function(){ travelCloseModals(); renderViews(); });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-trv-modal-backdrop]"), function(backdrop){
+        backdrop.addEventListener("click", function(ev){ if(ev.target===backdrop){ travelCloseModals(); renderViews(); } });
       });
     }
 
