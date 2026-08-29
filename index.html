@@ -1538,6 +1538,7 @@
 
   function blankState(){
     return {
+      updatedAt: 0, // ms-since-epoch, stamped on every save() — lets cloud sync tell a real edit apart from a stale row
       habits: [],
       habitsNote: "",
       expenses: [],
@@ -1578,7 +1579,8 @@
         activities: [],
         planned: [],
         migratedIronmanV1: false,
-        seededExamplesV1: false
+        seededExamplesV1: false,
+        examplesRemovedV1: false
       },
       body: {
         metrics: bodyBuiltinMetrics(),
@@ -1912,7 +1914,7 @@
         if(!Array.isArray(state.library.categories) || !state.library.categories.length) state.library.categories = blankState().library.categories;
         if(!Array.isArray(state.library.items)) state.library.items = [];
         if(!Array.isArray(state.library.activity)) state.library.activity = [];
-        state.challenges = Object.assign({ list:[], activities:[], planned:[], migratedIronmanV1:false, seededExamplesV1:false }, parsed.challenges || {});
+        state.challenges = Object.assign({ list:[], activities:[], planned:[], migratedIronmanV1:false, seededExamplesV1:false, examplesRemovedV1:false }, parsed.challenges || {});
         if(!Array.isArray(state.challenges.list)) state.challenges.list = [];
         if(!Array.isArray(state.challenges.activities)) state.challenges.activities = [];
         if(!Array.isArray(state.challenges.planned)) state.challenges.planned = [];
@@ -1948,7 +1950,7 @@
     state.challenges.activities = (state.challenges.activities||[]).map(normalizeChallengeActivity);
     state.challenges.planned = (state.challenges.planned||[]).map(normalizePlannedChallengeActivity);
     migrateIronmanIntoChallenges();
-    seedExampleChallenges();
+    removeExampleChallenges();
     state.body.metrics = (state.body.metrics||[]).map(normalizeBodyMetric);
     state.body.measurements = (state.body.measurements||[]).map(normalizeBodyMeasurement);
     state.travel.trips = (state.travel.trips||[]).map(normalizeTrip);
@@ -2353,227 +2355,23 @@
     });
   }
 
-  /* One-time demo seed, explicitly requested by the user to try the Challenges feature out —
-     8 example challenges matching their reference mockups. Fully real records (not just display
-     numbers): every percentage below is computed live from seeded goals/activities the same way
-     a user's own data would be, so the numbers land close to — but not pixel-identical to — the
-     mockup screenshots. All 8 are ordinary challenges: deletable, archivable, and editable exactly
-     like anything the user creates themselves. Guarded so it only ever runs once per browser. */
-  function seedExampleChallenges(){
-    if(state.challenges.seededExamplesV1) return;
-    state.challenges.seededExamplesV1 = true;
-    var today = todayISO();
-
-    /* ---- Ironman Barcelona 2026 (rich example: goals, milestones, plan, weekly focus) ---- */
-    (function(){
-      var chalId = "example-ironman-barcelona";
-      var eventDate = addDays(today, 26);
-      var startDate = addDays(today, -230);
-      var goals = [
-        normalizeChallengeGoal({ title:"Swim", type:"distance", unit:"km", target:10, period:"weekly", key:"swim", order:0 }),
-        normalizeChallengeGoal({ title:"Bike", type:"time", unit:"min", target:360, period:"weekly", key:"bike", order:1 }),
-        normalizeChallengeGoal({ title:"Run", type:"time", unit:"min", target:270, period:"weekly", key:"run", order:2 }),
-        normalizeChallengeGoal({ title:"Strength", type:"sessions", unit:"sessions", target:3, period:"weekly", key:"strength", order:3 }),
-        normalizeChallengeGoal({ title:"Mobility", type:"time", unit:"min", target:150, period:"weekly", key:"mobility", order:4 }),
-        normalizeChallengeGoal({ title:"Swimming", type:"distance", unit:"km", target:40, period:"overall", key:"swim", order:5 }),
-        normalizeChallengeGoal({ title:"Cycling", type:"distance", unit:"km", target:1000, period:"overall", key:"bike", order:6 }),
-        normalizeChallengeGoal({ title:"Running", type:"distance", unit:"km", target:180, period:"overall", key:"run", order:7 }),
-        normalizeChallengeGoal({ title:"Strength sessions", type:"sessions", unit:"sessions", target:30, period:"overall", key:"strength", order:8 }),
-        normalizeChallengeGoal({ title:"Swim continuously for 3.8 km", period:"overall", progressType:"manual", status:"in_progress", longTerm:true, deadline:eventDate, order:9 }),
-        normalizeChallengeGoal({ title:"Bike 150 km comfortably", period:"overall", progressType:"manual", status:"in_progress", longTerm:true, deadline:eventDate, order:10 }),
-        normalizeChallengeGoal({ title:"Complete a 30 km long run", period:"overall", progressType:"manual", status:"not_started", longTerm:true, deadline:eventDate, order:11 }),
-        normalizeChallengeGoal({ title:"Train 10 hours/week consistently", period:"overall", progressType:"manual", status:"in_progress", longTerm:true, deadline:eventDate, order:12 }),
-        normalizeChallengeGoal({ title:"Complete the race", period:"overall", progressType:"manual", status:"not_started", longTerm:true, deadline:eventDate, order:13 })
-      ];
-      var milestones = [
-        normalizeChallengeMilestone({ title:"Register for race", completed:true, completedDate:startDate, order:0 }),
-        normalizeChallengeMilestone({ title:"Complete first Olympic triathlon", completed:true, completedDate:addDays(startDate,55), order:1 }),
-        normalizeChallengeMilestone({ title:"First 100 km ride", completed:true, completedDate:addDays(startDate,100), order:2 }),
-        normalizeChallengeMilestone({ title:"First 25 km run", completed:false, targetDate:addDays(today,20), order:3 }),
-        normalizeChallengeMilestone({ title:"First 3 km open-water swim", completed:false, targetDate:addDays(today,10), order:4 }),
-        normalizeChallengeMilestone({ title:"Complete peak training week", completed:false, targetDate:addDays(today,5), order:5 }),
-        normalizeChallengeMilestone({ title:"Race day", completed:false, targetDate:eventDate, order:6 })
-      ];
-      var thisWeek = startOfWeekISO(today);
-      var focus = [
-        normalizeChallengeFocus({ weekStart:thisWeek, title:"Build aerobic base", completed:true, order:0 }),
-        normalizeChallengeFocus({ weekStart:thisWeek, title:"Stay consistent", completed:true, order:1 }),
-        normalizeChallengeFocus({ weekStart:thisWeek, title:"Long bike on Saturday", completed:false, order:2 }),
-        normalizeChallengeFocus({ weekStart:thisWeek, title:"Easy run on Sunday", completed:false, order:3 })
-      ];
-      state.challenges.list.push(normalizeChallenge({
-        id: chalId, name:"Ironman Barcelona 2026", category:"triathlon",
-        description:"Full-distance Ironman — 3.8km swim, 180km bike, 42.2km run.",
-        reason:"Always wanted to find out what a full day of racing feels like.",
-        startDate: startDate, endDate: eventDate, eventDate: eventDate,
-        color:"home-teal", status:"active", progressType:"goal",
-        goals: goals, milestones: milestones, focus: focus
-      }));
-      var weeks = 10;
-      for(var w=weeks; w>=1; w--){
-        var weekMon = addDays(startOfWeekISO(today), -7*w);
-        var sessions = [
-          { offset:0, type:"swim", distance:1.4+Math.random()*0.6, duration:35+Math.floor(Math.random()*15), sessionType:"Easy aerobic" },
-          { offset:1, type:"bike", distance:20+Math.random()*10, duration:60+Math.floor(Math.random()*15), sessionType:"Zone 2" },
-          { offset:1, type:"run", distance:6+Math.random()*3, duration:40+Math.floor(Math.random()*15), sessionType:"Easy run" },
-          { offset:2, type:"strength", distance:null, duration:45, sessionType:"Full body" },
-          { offset:2, type:"mobility", distance:null, duration:20, sessionType:"Mobility" },
-          { offset:3, type:"run", distance:8+Math.random()*3, duration:45+Math.floor(Math.random()*10), sessionType:"Tempo" },
-          { offset:4, type:"swim", distance:1.8+Math.random()*0.7, duration:40+Math.floor(Math.random()*15), sessionType:"Technique" },
-          { offset:4, type:"mobility", distance:null, duration:20, sessionType:"Mobility" },
-          { offset:5, type:"bike", distance:60+Math.random()*40, duration:150+Math.floor(Math.random()*60), sessionType:"Long ride" },
-          { offset:6, type:"run", distance:10+Math.random()*8, duration:60+Math.floor(Math.random()*30), sessionType:"Long run" }
-        ];
-        sessions.forEach(function(s, i){
-          state.challenges.activities.push(normalizeChallengeActivity({
-            id:"example-tri-act-"+w+"-"+i, challengeId: chalId, type:s.type,
-            date: addDays(weekMon, s.offset), durationMinutes:s.duration,
-            distance: s.distance ? Math.round(s.distance*10)/10 : null, unit: s.distance ? "km" : "",
-            sessionType: s.sessionType,
-            feeling: ["Easy","Moderate","Moderate","Hard"][Math.floor(Math.random()*4)],
-            createdAt: addDays(weekMon, s.offset)
-          }));
-        });
-      }
-      var mon = startOfWeekISO(today);
-      var plannedRows = [
-        { type:"swim", cells:["1.5 km · Easy","2.0 km · Intervals","1.8 km · Technique","","2.2 km · Endurance","2.5 km · Open water","1.5 km · Recovery"] },
-        { type:"bike", cells:["60 min · Z2","90 min · Z2","75 min · Z3","","60 min · Z2","3h 00m · Z2 Long ride","90 min · Z1 Recovery"] },
-        { type:"run", cells:["45 min · Easy","60 min · Z2","30 min · Easy","45 min · Tempo","60 min · Easy","20 min · Brick run","1h 30m · Long run"] },
-        { type:"strength", cells:["Upper · 45 min","Lower · 45 min","Core · 30 min","","Full body · 45 min","Core · 30 min",""] },
-        { type:"mobility", cells:["20 min","20 min","20 min","20 min","20 min","20 min","30 min"] }
-      ];
-      plannedRows.forEach(function(row, ri){
-        row.cells.forEach(function(cell, di){
-          if(!cell) return;
-          state.challenges.planned.push(normalizePlannedChallengeActivity({
-            id:"example-tri-plan-"+ri+"-"+di, challengeId: chalId, date: addDays(mon, di), type: row.type, title: cell
-          }));
-        });
-      });
-    })();
-
-    /* ---- 75 Hard Challenge (day-based progress) ---- */
-    (function(){
-      var chalId = "example-75hard";
-      var endDate = addDays(today, 28), startDate = addDays(endDate, -75);
-      state.challenges.list.push(normalizeChallenge({
-        id: chalId, name:"75 Hard Challenge", category:"fitness",
-        description:"Two workouts a day, a strict diet, 10 pages of reading, a progress photo — every day, no exceptions.",
-        startDate: startDate, endDate: endDate, color:"ember", status:"active", progressType:"day", dayTarget:75
-      }));
-      for(var i=0;i<35;i++){
-        state.challenges.activities.push(normalizeChallengeActivity({
-          id:"example-75h-act-"+i, challengeId: chalId, type:"task", date: addDays(startDate, i),
-          sessionType:"Daily requirements", notes:"Workout 1 · Workout 2 · Read 10 pages · Water · Diet",
-          createdAt: addDays(startDate, i)
-        }));
-      }
-    })();
-
-    /* ---- Marathon Amsterdam 2026 (goal-based training block + weekly runs) ---- */
-    (function(){
-      var chalId = "example-marathon-ams";
-      var eventDate = addDays(today, 177);
-      state.challenges.list.push(normalizeChallenge({
-        id: chalId, name:"Marathon Amsterdam 2026", category:"running",
-        startDate: addDays(today,-45), endDate: eventDate, eventDate: eventDate,
-        color:"plum", status:"active", progressType:"goal",
-        goals:[
-          normalizeChallengeGoal({ title:"Training block", type:"sessions", unit:"long runs", target:20, period:"overall", key:"run-long" }),
-          normalizeChallengeGoal({ title:"Runs", type:"sessions", unit:"runs", target:4, period:"weekly", key:"run" })
-        ]
-      }));
-      var mon = startOfWeekISO(today);
-      ["run","run"].forEach(function(t,i){
-        state.challenges.activities.push(normalizeChallengeActivity({ id:"example-marathon-act-"+i, challengeId:chalId, type:t, date:addDays(mon,i*2), distance:8+i*2, unit:"km", durationMinutes:45+i*10, sessionType:"Easy run" }));
-      });
-      for(var i=0;i<7;i++){
-        state.challenges.activities.push(normalizeChallengeActivity({ id:"example-marathon-long-"+i, challengeId:chalId, type:"run-long", date:addDays(today,-14*i-3), distance:18+i, unit:"km", durationMinutes:100+i*8, sessionType:"Long run" }));
-      }
-    })();
-
-    /* ---- Half Marathon Berlin 2026 ---- */
-    (function(){
-      var chalId = "example-halfmarathon-berlin";
-      var eventDate = addDays(today, 58);
-      state.challenges.list.push(normalizeChallenge({
-        id: chalId, name:"Half Marathon Berlin 2026", category:"running",
-        startDate: addDays(today,-40), endDate: eventDate, eventDate: eventDate,
-        color:"home-blue", status:"active", progressType:"goal",
-        goals:[
-          normalizeChallengeGoal({ title:"Training block", type:"sessions", unit:"long runs", target:15, period:"overall", key:"run-long" }),
-          normalizeChallengeGoal({ title:"Runs", type:"sessions", unit:"runs", target:3, period:"weekly", key:"run" })
-        ]
-      }));
-      var mon = startOfWeekISO(today);
-      for(var i=0;i<3;i++){
-        state.challenges.activities.push(normalizeChallengeActivity({ id:"example-halfm-act-"+i, challengeId:chalId, type:"run", date:addDays(mon,i*2), distance:7+i, unit:"km", durationMinutes:40+i*8, sessionType:"Easy run" }));
-      }
-      for(var j=0;j<9;j++){
-        state.challenges.activities.push(normalizeChallengeActivity({ id:"example-halfm-long-"+j, challengeId:chalId, type:"run-long", date:addDays(today,-9*j-2), distance:14+j, unit:"km", durationMinutes:80+j*5, sessionType:"Long run" }));
-      }
-    })();
-
-    /* ---- Gran Fondo (cycling) ---- */
-    (function(){
-      var chalId = "example-gran-fondo";
-      var eventDate = addDays(today, 120);
-      state.challenges.list.push(normalizeChallenge({
-        id: chalId, name:"Gran Fondo", category:"cycling",
-        startDate: addDays(today,-30), endDate: eventDate, eventDate: eventDate,
-        color:"steel", status:"active", progressType:"goal",
-        goals:[
-          normalizeChallengeGoal({ title:"Distance", type:"distance", unit:"km", target:500, period:"overall", key:"bike" }),
-          normalizeChallengeGoal({ title:"Rides", type:"sessions", unit:"rides", target:2, period:"weekly", key:"bike" })
-        ]
-      }));
-      state.challenges.activities.push(normalizeChallengeActivity({ id:"example-granfondo-act-1", challengeId:chalId, type:"bike", date:addDays(today,-2), distance:200, unit:"km", durationMinutes:420, sessionType:"Long ride" }));
-    })();
-
-    /* ---- Swim 100km ---- */
-    (function(){
-      var chalId = "example-swim-100km";
-      var eventDate = addDays(today, 82);
-      state.challenges.list.push(normalizeChallenge({
-        id: chalId, name:"Swim 100km", category:"swimming",
-        startDate: addDays(today,-60), endDate: eventDate, eventDate: eventDate,
-        color:"home-purple", status:"active", progressType:"goal",
-        goals:[ normalizeChallengeGoal({ title:"Distance", type:"distance", unit:"km", target:100, period:"overall", key:"swim" }) ]
-      }));
-      state.challenges.activities.push(normalizeChallengeActivity({ id:"example-swim100-act-1", challengeId:chalId, type:"swim", date:addDays(today,-3), distance:55, unit:"km", durationMinutes:1200, sessionType:"Endurance" }));
-    })();
-
-    /* ---- Push-Up Challenge ---- */
-    (function(){
-      var chalId = "example-pushup";
-      var eventDate = addDays(today, 15);
-      state.challenges.list.push(normalizeChallenge({
-        id: chalId, name:"Push-Up Challenge", category:"strength",
-        startDate: addDays(today,-15), endDate: eventDate, eventDate: eventDate,
-        color:"rose", status:"active", progressType:"goal",
-        goals:[ normalizeChallengeGoal({ title:"Push-ups", type:"reps", unit:"push-ups", target:3000, period:"overall", key:"pushup" }) ]
-      }));
-      state.challenges.activities.push(normalizeChallengeActivity({ id:"example-pushup-act-1", challengeId:chalId, type:"pushup", date:addDays(today,-1), distance:2100, unit:"reps", durationMinutes:20, sessionType:"Session" }));
-    })();
-
-    /* ---- Hike 50 Peaks ---- */
-    (function(){
-      var chalId = "example-hike-50-peaks";
-      var eventDate = addDays(today, 200);
-      state.challenges.list.push(normalizeChallenge({
-        id: chalId, name:"Hike 50 Peaks", category:"adventure",
-        startDate: addDays(today,-90), endDate: eventDate, eventDate: eventDate,
-        color:"gold", status:"active", progressType:"goal",
-        goals:[ normalizeChallengeGoal({ title:"Peaks", type:"sessions", unit:"peaks", target:50, period:"overall", key:"hike" }) ]
-      }));
-      for(var i=0;i<13;i++){
-        state.challenges.activities.push(normalizeChallengeActivity({ id:"example-hike-act-"+i, challengeId:chalId, type:"hike", date:addDays(today,-7*i-1), distance:8+i%4, unit:"km", durationMinutes:180+i*10, sessionType:"Session" }));
-      }
-    })();
+  /* v23.2: the demo seed that used to live here (8 example challenges: Ironman Barcelona, 75 Hard,
+     Amsterdam Marathon, Berlin Half, a gran fondo, a swim goal, a push-up challenge, Hike 50 Peaks)
+     has been removed per user request -- it was only ever meant as a one-time way to try the
+     Challenges feature, not something to keep around. This one-time cleanup finds and strips any
+     of those seeded records that already made it into a user's saved state; every seed record used
+     an id/challengeId starting with "example-", so this can't touch anything the user created
+     themselves. Guarded the same way the old seed was, so it only ever runs once per browser. */
+  function removeExampleChallenges(){
+    if(state.challenges.examplesRemovedV1) return;
+    state.challenges.examplesRemovedV1 = true;
+    state.challenges.list = state.challenges.list.filter(function(c){ return !/^example-/.test(c.id||""); });
+    state.challenges.activities = state.challenges.activities.filter(function(a){ return !/^example-/.test(a.id||"") && !/^example-/.test(a.challengeId||""); });
+    state.challenges.planned = state.challenges.planned.filter(function(p){ return !/^example-/.test(p.id||"") && !/^example-/.test(p.challengeId||""); });
   }
 
   function save(){
+    state.updatedAt = Date.now();
     saveLocalOnly();
     scheduleCloudSync();
   }
@@ -2616,6 +2414,18 @@
     cloudSyncPending = true;
     if(cloudSyncTimer) clearTimeout(cloudSyncTimer);
     cloudSyncTimer = setTimeout(pushCloudSync, CLOUD_SYNC_DEBOUNCE_MS);
+  }
+  /* Best-effort flush of a debounced-but-not-yet-sent push when the tab is being backgrounded or
+     closed, so the cloud row is as fresh as possible before the next onAuthReady fetch runs (that
+     fetch now compares updatedAt rather than blindly trusting the cloud row either way, so a missed
+     flush here can no longer lose data — this just keeps other devices' copies current sooner). */
+  if(typeof document!=="undefined"){
+    document.addEventListener("visibilitychange", function(){
+      if(document.visibilityState==="hidden" && cloudSyncPending) pushCloudSync();
+    });
+    window.addEventListener("pagehide", function(){
+      if(cloudSyncPending) pushCloudSync();
+    });
   }
   function pushCloudSync(){
     if(!sb || !currentUser) return;
@@ -2893,9 +2703,23 @@
         return;
       }
       if(res.data && res.data.data && Object.keys(res.data.data).length){
-        applyCloudData(res.data.data);
-        cloudSyncStatus = "synced"; renderSyncBadge();
-        renderTabs(); renderViews();
+        /* Cloud is only the source of truth when it's actually newer. A blind overwrite here is
+           what used to make same-session edits (e.g. a Calendar block added just before closing
+           the tab) vanish: save() writes localStorage immediately, but the cloud push is debounced
+           (see CLOUD_SYNC_DEBOUNCE_MS) — close the tab inside that window and the push never fires,
+           so on reopen this fetch would return the stale pre-edit row and stomp the newer local
+           copy. Comparing updatedAt (stamped by every save()) fixes that: cloud only wins a real
+           race (a genuinely newer edit from another device); otherwise local wins and gets pushed
+           up so the cloud row catches up instead. */
+        var cloudUpdatedAt = res.data.data.updatedAt || 0;
+        if(cloudUpdatedAt > (state.updatedAt || 0)){
+          applyCloudData(res.data.data);
+          cloudSyncStatus = "synced"; renderSyncBadge();
+          renderTabs(); renderViews();
+        } else {
+          cloudSyncStatus = "idle"; renderSyncBadge();
+          pushCloudSync();
+        }
       } else if(hasMeaningfulLocalData()){
         cloudSyncStatus = "idle"; renderSyncBadge();
         showMigrationOffer();
