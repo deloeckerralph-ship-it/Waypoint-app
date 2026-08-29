@@ -1858,6 +1858,9 @@
   function itineraryForTripDay(tripId, dayIndex){ return itineraryForTrip(tripId).filter(function(it){ return it.dayIndex===dayIndex; }); }
   function photosForTrip(tripId){ return state.travel.photos.filter(function(ph){ return ph.tripId===tripId; }); }
   function photosForPlace(placeId){ return state.travel.photos.filter(function(ph){ return ph.placeId===placeId; }); }
+  function travelPhotoCellHTML(ph){
+    return '<div class="trv-photo-cell"><img src="'+ph.dataUrl+'" alt=""><button type="button" class="trv-photo-del" data-trv-del-photo="'+ph.id+'" title="Delete">&times;</button></div>';
+  }
   function tripDayCount(t){
     if(!t.startDate || !t.endDate) return 1;
     return Math.max(1, Math.round((parseISO(t.endDate)-parseISO(t.startDate))/86400000)+1);
@@ -1880,6 +1883,17 @@
       .slice().sort(function(a,b){ return a.startDate<b.startDate?-1:1; }).slice(0, limit||5);
   }
 
+  function normalizeWorkout(w){
+    return {
+      id: w.id || uid(),
+      type: w.type || "other",
+      date: w.date || todayISO(),
+      duration: (typeof w.duration==="number") ? w.duration : 0,
+      notes: w.notes || "",
+      photos: Array.isArray(w.photos) ? w.photos : [], // dataURLs, snapped straight from camera or picked from gallery
+      createdAt: w.createdAt || todayISO()
+    };
+  }
   function normalizeHabit(h, idx){
     return {
       id: h.id || uid(),
@@ -1936,6 +1950,7 @@
         if(!Array.isArray(state.travel.photos)) state.travel.photos = [];
       }
     state.habits = (state.habits||[]).map(normalizeHabit);
+    state.workouts = (state.workouts||[]).map(normalizeWorkout);
     state.study.subjects = (state.study.subjects||[]).map(normalizeSubject);
     state.study.materials = (state.study.materials||[]).map(normalizeMaterial);
     state.study.chapters = (state.study.chapters||[]).map(normalizeChapter);
@@ -3125,6 +3140,8 @@
     return { activeHabits:activeHabitsCount, doneToday:doneToday, bestStreak:bestStreak, weekSpend:weekSpend, weekWorkouts:weekWorkouts, pagesThisWeek:pagesThisWeek, studyMinThisWeek:studyMinThisWeek };
   }
 
+  var workoutPendingPhoto = null; // dataURL staged from the Log-a-Workout form's camera/photo field, attached on submit
+
   /* ---- Today nav/UI state — Today is the execution layer of the same daily-plan data Calendar
      plans with (state.timeBlocks/state.dayNotes), browsed independently of Calendar's own view state ---- */
   var todayViewDate = null;        // ISO date being browsed on Today; lazily set to real today
@@ -3150,7 +3167,6 @@
   var TAG_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11.5 3H4v7.5L14 20.5l7.5-7.5L11.5 3Z"/><circle cx="8" cy="7.5" r="1.4" fill="currentColor" stroke="none"/></svg>';
   var STAR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5l2.6 5.6 6.1.7-4.5 4.2 1.2 6-5.4-3-5.4 3 1.2-6-4.5-4.2 6.1-.7Z"/></svg>';
   var HEART_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20.5s-7.5-4.6-10-9.3C.4 7.6 2.4 4 6 4c2.2 0 3.8 1.3 6 3.8C14.2 5.3 15.8 4 18 4c3.6 0 5.6 3.6 4 7.2-2.5 4.7-10 9.3-10 9.3Z"/></svg>';
-  var CAMERA_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l1.5-2.5h7L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13.5" r="3.5"/></svg>';
   var BARCODE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 5v14M7 5v14M10 5v14M14 5v14M16 5v14M20 5v14"/></svg>';
   var SEARCH_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>';
   var CATEGORY_ICON_SVGS = { book:BOOK_SVG, film:FILM_SVG, tv:TV_SVG, disc:DISC_SVG, mic:MIC_SVG, wineglass:WINEGLASS_SVG, tag:TAG_SVG };
@@ -3437,13 +3453,13 @@
       }).catch(function(err){
         if(myToken!==libScanRunToken) return;
         libScanStatus="error";
-        libScanErrorMsg = (err && err.name==="NotAllowedError") ? "Camera access was denied. Enter the code by hand below instead." : "Couldn't start the camera. Enter the code by hand below instead.";
+        libScanErrorMsg = (err && err.name==="NotAllowedError") ? "Camera access was denied. Check this site's camera permission in your browser settings, then tap Try again." : "Couldn't start the camera. Enter the code by hand below instead.";
         renderScanModal();
       });
     }).catch(function(){
       if(myToken!==libScanRunToken) return;
       libScanStatus="error";
-      libScanErrorMsg = "This browser can't scan a barcode automatically. Enter the code by hand below instead.";
+      libScanErrorMsg = "Couldn't load the scanning library — check your connection and tap Try again, or enter the code by hand below.";
       renderScanModal();
     });
   }
@@ -3452,8 +3468,11 @@
     libScanStatus="starting";
     var myToken = ++libScanRunToken;
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      var insecureOrigin = typeof location!=="undefined" && location.protocol!=="https:" && location.hostname!=="localhost" && location.hostname!=="127.0.0.1";
       libScanStatus="error";
-      libScanErrorMsg = "Camera not available in this browser. Enter the code by hand below instead.";
+      libScanErrorMsg = insecureOrigin
+        ? "Camera access needs a secure (https) connection. Enter the code by hand below instead."
+        : "Camera not available in this browser. Enter the code by hand below instead.";
       renderScanModal(); return;
     }
     var video = document.getElementById("scan-video");
@@ -3534,6 +3553,8 @@
     if(cancelBtn) cancelBtn.addEventListener("click", closeScanModal);
     var againBtn = backdrop.querySelector("[data-scan-again]");
     if(againBtn) againBtn.addEventListener("click", function(){ resetScanState(); renderScanModal(); });
+    var retryBtn = backdrop.querySelector("[data-scan-retry]");
+    if(retryBtn) retryBtn.addEventListener("click", function(){ resetScanState(); renderScanModal(); });
     var manualBtn = backdrop.querySelector("#scan-manual-submit");
     var manualInput = backdrop.querySelector("#scan-manual-input");
     function submitManual(){
@@ -5169,6 +5190,8 @@
             '<label class="f">Duration (min)<input type="number" min="0" id="wk-duration" placeholder="45"></label>'+
           '</div>'+
           '<label class="f">Notes<input type="text" id="wk-notes" placeholder="optional"></label>'+
+          '<label class="f">Photo (optional)<input type="file" accept="image/*" capture="environment" id="wk-photo-input"></label>'+
+          '<div id="wk-photo-preview">'+(workoutPendingPhoto ? '<div class="trv-photo-cell" style="width:88px;height:88px;margin-top:4px"><img src="'+workoutPendingPhoto+'" alt=""><button type="button" class="trv-photo-del" id="wk-photo-clear" title="Remove">&times;</button></div>' : '')+'</div>'+
           '<button class="btn btn-primary" type="submit">Add Workout</button>'+
         '</form>'+
       '</div>'+
@@ -5176,9 +5199,12 @@
       '</div>'+
       '<div class="panel"><div class="panel-head"><h2>Workout log</h2><span class="hint">'+list.length+' total</span></div>'+
         (list.length? '<div class="rows">'+list.map(function(w){
-          return '<div class="row"><span class="swatch" style="background:'+colorForCategory(w.type)+'"></span>'+
-            '<div class="main"><div class="title">'+capitalize(w.type)+(w.notes?' — '+esc(w.notes):'')+'</div><div class="meta">'+daysAgoLabel(w.date)+'</div></div>'+
+          var hasPhoto = w.photos && w.photos.length;
+          var lead = hasPhoto ? '<img src="'+w.photos[0]+'" alt="" style="width:34px;height:34px;border-radius:8px;object-fit:cover;flex-shrink:0">' : '<span class="swatch" style="background:'+colorForCategory(w.type)+'"></span>';
+          return '<div class="row">'+lead+
+            '<div class="main"><div class="title">'+capitalize(w.type)+(w.notes?' — '+esc(w.notes):'')+'</div><div class="meta">'+daysAgoLabel(w.date)+(hasPhoto&&w.photos.length>1?' · '+w.photos.length+' photos':'')+'</div></div>'+
             '<div class="amount">'+(w.duration?w.duration+" min":"")+'</div>'+
+            '<label class="btn-ghost" style="cursor:pointer;display:flex;align-items:center" title="Add photo">'+CAMERA_SVG+'<input type="file" accept="image/*" capture="environment" class="wk-row-photo-input" data-wk-photo="'+w.id+'" style="display:none"></label>'+
             '<button class="btn-ghost" data-del-workout="'+w.id+'" title="Delete">✕</button></div>';
         }).join("")+'</div>' : '<p class="empty">No workouts yet.</p>')+
       '</div>'+
@@ -5723,7 +5749,7 @@
             '<label class="cover-dropzone" id="lib-cover-drop">'+
               '<img id="lib-cover-preview" src="'+esc(vals.coverImage||"")+'" alt="" style="display:'+(vals.coverImage?"block":"none")+'">'+
               '<span id="lib-cover-placeholder" style="display:'+(vals.coverImage?"none":"flex")+';flex-direction:column;align-items:center;gap:4px">'+CAMERA_SVG+'<div>Add cover</div></span>'+
-              '<input type="file" accept="image/*" id="lib-cover-input" style="display:none">'+
+              '<input type="file" accept="image/*" capture="environment" id="lib-cover-input" style="display:none">'+
             '</label>'+
             '<div class="stack" style="flex:1">'+
               '<label class="f">Title<input type="text" id="lib-title" value="'+esc(vals.title||"")+'" required></label>'+
@@ -5798,7 +5824,10 @@
           '<label class="f" style="flex:1">Or enter the code by hand<input type="text" id="scan-manual-input" inputmode="numeric" value="'+esc(libScanManualCode)+'" placeholder="e.g. 9780140328721"></label>'+
           '<button type="button" class="btn" id="scan-manual-submit">Look up</button>'+
         '</div>'+
-        '<div class="modal-actions"><button type="button" class="btn-ghost" data-scan-cancel>Cancel</button></div>';
+        '<div class="modal-actions">'+
+          (libScanStatus==="error" ? '<button type="button" class="btn-ghost" data-scan-retry>Try again</button>' : '')+
+          '<button type="button" class="btn-ghost" data-scan-cancel>Cancel</button>'+
+        '</div>';
     }
     return '<div class="modal-backdrop" data-scan-modal-backdrop>'+
       '<div class="modal-card" style="max-width:460px">'+
@@ -9161,15 +9190,38 @@
     return html;
   }
 
+  /* Photos are grouped by trip day instead of one flat album, per user request. Shares the same
+     travelTripDay selector (and travelDayTabsHTML strip) the Itinerary subtab already uses, so
+     switching to "Day 3" here keeps Day 3 selected if the user then flips to Itinerary, and vice
+     versa. A photo's day is just its .date field matched against that day's real calendar date
+     (tripDayDate) — no separate dayIndex field needed. Photos whose date doesn't land on any day
+     of the trip (taken before/after the trip dates, or from before this grouping existed) fall
+     into an "Other trip photos" bucket underneath rather than being hidden. */
   function travelTripPhotosHTML(t){
-    var photos = photosForTrip(t.id);
-    return '<div class="panel"><div class="panel-head"><h2>Photos</h2>'+
-      '<label class="btn btn-primary" style="background:var(--teal);cursor:pointer">+ Add photo<input type="file" accept="image/*" id="trv-photo-input" data-trv-photo-trip="'+t.id+'" style="display:none"></label>'+
+    var dayCount = tripDayCount(t);
+    var day = Math.min(travelTripDay, Math.max(0, dayCount-1));
+    var dateForDay = tripDayDate(t, day);
+    var allPhotos = photosForTrip(t.id);
+    // The set of real calendar dates covered by this trip's days — used to tell "not this day"
+    // apart from "not tagged to any day at all". Otherwise switching days would show every other
+    // day's photos dumped into "Other trip photos" instead of just genuinely undated/orphaned ones.
+    var tripDayDates = {};
+    for(var di=0; di<dayCount; di++){ var dd=tripDayDate(t,di); if(dd) tripDayDates[dd]=true; }
+    var dayPhotos = dateForDay ? allPhotos.filter(function(ph){ return ph.date===dateForDay; }) : allPhotos;
+    var otherPhotos = dateForDay ? allPhotos.filter(function(ph){ return ph.date!==dateForDay && !tripDayDates[ph.date]; }) : [];
+
+    var html = dayCount>1 ? travelDayTabsHTML(t, day) : "";
+    html += '<div class="panel"><div class="panel-head"><h2>Day '+(day+1)+(dateForDay?" · "+fmtShort(dateForDay):"")+'</h2>'+
+      '<label class="btn btn-primary" style="background:var(--teal);cursor:pointer">+ Add photo<input type="file" accept="image/*" capture="environment" id="trv-photo-input" data-trv-photo-trip="'+t.id+'" data-trv-photo-date="'+(dateForDay||todayISO())+'" style="display:none"></label>'+
       '</div>'+
-      (photos.length ? '<div class="trv-photo-grid">'+photos.map(function(ph){
-        return '<div class="trv-photo-cell"><img src="'+ph.dataUrl+'" alt=""><button type="button" class="trv-photo-del" data-trv-del-photo="'+ph.id+'" title="Delete">&times;</button></div>';
-      }).join("")+'</div>' : '<p class="empty">No photos yet.</p>')+
+      (dayPhotos.length ? '<div class="trv-photo-grid">'+dayPhotos.map(travelPhotoCellHTML).join("")+'</div>' : '<p class="empty">No photos for this day yet.</p>')+
     '</div>';
+    if(otherPhotos.length){
+      html += '<div class="panel"><div class="panel-head"><h2>Other trip photos</h2><span class="hint">Not dated to a specific day</span></div>'+
+        '<div class="trv-photo-grid">'+otherPhotos.map(travelPhotoCellHTML).join("")+'</div>'+
+      '</div>';
+    }
+    return html;
   }
 
   function travelTripReviewsHTML(t){
@@ -9269,11 +9321,9 @@
   function travelPlacePhotosHTML(p){
     var photos = photosForPlace(p.id);
     return '<div class="panel"><div class="panel-head"><h2>Photos</h2>'+
-      '<label class="btn btn-primary" style="background:var(--teal);cursor:pointer">+ Add photo<input type="file" accept="image/*" id="trv-photo-input" data-trv-photo-place="'+p.id+'" style="display:none"></label>'+
+      '<label class="btn btn-primary" style="background:var(--teal);cursor:pointer">+ Add photo<input type="file" accept="image/*" capture="environment" id="trv-photo-input" data-trv-photo-place="'+p.id+'" style="display:none"></label>'+
       '</div>'+
-      (photos.length ? '<div class="trv-photo-grid">'+photos.map(function(ph){
-        return '<div class="trv-photo-cell"><img src="'+ph.dataUrl+'" alt=""><button type="button" class="trv-photo-del" data-trv-del-photo="'+ph.id+'" title="Delete">&times;</button></div>';
-      }).join("")+'</div>' : '<p class="empty">No photos yet.</p>')+
+      (photos.length ? '<div class="trv-photo-grid">'+photos.map(travelPhotoCellHTML).join("")+'</div>' : '<p class="empty">No photos yet.</p>')+
     '</div>';
   }
   function travelPlaceReviewsHTML(p){
@@ -9351,7 +9401,7 @@
         '<label class="f">Color<div class="swatch-row" id="trv-trip-color-row" data-selected="'+esc(color)+'">'+
           STUDY_COLOR_PALETTE.map(function(cItem){ return '<button type="button" class="color-swatch'+(color===cItem.var?" active":"")+'" data-trv-trip-color="'+esc(cItem.var)+'" style="background:'+cItem.var+'"></button>'; }).join("")+
         '</div></label>'+
-        '<label class="f">Cover photo (optional)<input type="file" accept="image/*" id="trv-trip-cover-input"></label>'+
+        '<label class="f">Cover photo (optional)<input type="file" accept="image/*" capture="environment" id="trv-trip-cover-input"></label>'+
         (coverImg ? '<img src="'+coverImg+'" style="max-width:140px;border-radius:10px;margin-top:-4px">' : "")+
         '<label class="chk-f"><input type="checkbox" id="trv-trip-cal-linked"'+(v.calendarLinked!==false?" checked":"")+'> Show itinerary on Calendar</label>'+
         '<div class="modal-actions">'+
@@ -9392,7 +9442,7 @@
         '<label class="chk-f"><input type="checkbox" id="trv-place-favorite"'+(v.favorite?" checked":"")+'> Favorite</label>'+
         '<label class="f">Tags (comma separated, optional)<input type="text" id="trv-place-tags" value="'+esc((v.tags||[]).join(", "))+'"></label>'+
         '<label class="f">Notes (optional)<textarea id="trv-place-note" rows="2">'+esc(v.note||"")+'</textarea></label>'+
-        '<label class="f">Cover photo (optional)<input type="file" accept="image/*" id="trv-place-cover-input"></label>'+
+        '<label class="f">Cover photo (optional)<input type="file" accept="image/*" capture="environment" id="trv-place-cover-input"></label>'+
         (coverImg ? '<img src="'+coverImg+'" style="max-width:140px;border-radius:10px;margin-top:-4px">' : "")+
         '<div class="modal-actions">'+
           (editing?'<button type="button" class="btn-ghost" data-trv-delete-place="'+editing.id+'" style="color:var(--bad);margin-right:auto">Delete</button>':'')+
@@ -10151,14 +10201,75 @@
       var wf = document.getElementById("workout-form");
       if(wf) wf.addEventListener("submit", function(ev){
         ev.preventDefault();
-        state.workouts.push({
+        state.workouts.push(normalizeWorkout({
           id:uid(),
           type:document.getElementById("wk-type").value,
           date:document.getElementById("wk-date").value || todayISO(),
           duration:Number(document.getElementById("wk-duration").value||0),
-          notes:document.getElementById("wk-notes").value.trim()
-        });
+          notes:document.getElementById("wk-notes").value.trim(),
+          photos: workoutPendingPhoto ? [workoutPendingPhoto] : []
+        }));
+        workoutPendingPhoto = null;
         save(); renderViews();
+      });
+      /* Photo field on the Log form: downscale + preview inline via direct DOM patch rather than
+         renderViews() — a full re-render here would wipe whatever's already typed into Notes/Duration
+         (those aren't controlled from JS state, just plain inputs), the same "erasure bug" class
+         noted elsewhere in this file. The photo itself stays in workoutPendingPhoto until submit. */
+      var wkPhotoInput = document.getElementById("wk-photo-input");
+      if(wkPhotoInput) wkPhotoInput.addEventListener("change", function(){
+        var file = wkPhotoInput.files && wkPhotoInput.files[0];
+        if(!file) return;
+        var reader = new FileReader();
+        reader.onload = function(e){
+          var img = new Image();
+          img.onload = function(){
+            var maxDim = 640, scale = Math.min(1, maxDim/Math.max(img.width,img.height));
+            var w = Math.max(1,Math.round(img.width*scale)), h = Math.max(1,Math.round(img.height*scale));
+            var canvas = document.createElement("canvas"); canvas.width=w; canvas.height=h;
+            canvas.getContext("2d").drawImage(img,0,0,w,h);
+            workoutPendingPhoto = canvas.toDataURL("image/jpeg", 0.7);
+            var preview = document.getElementById("wk-photo-preview");
+            if(preview){
+              preview.innerHTML = '<div class="trv-photo-cell" style="width:88px;height:88px;margin-top:4px"><img src="'+workoutPendingPhoto+'" alt=""><button type="button" class="trv-photo-del" id="wk-photo-clear" title="Remove">&times;</button></div>';
+              var clearBtn = document.getElementById("wk-photo-clear");
+              if(clearBtn) clearBtn.addEventListener("click", function(){ workoutPendingPhoto=null; preview.innerHTML=""; wkPhotoInput.value=""; });
+            }
+          };
+          img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      });
+      var wkPhotoClearInit = document.getElementById("wk-photo-clear");
+      if(wkPhotoClearInit) wkPhotoClearInit.addEventListener("click", function(){
+        workoutPendingPhoto=null;
+        var preview = document.getElementById("wk-photo-preview");
+        if(preview) preview.innerHTML="";
+        if(wkPhotoInput) wkPhotoInput.value="";
+      });
+      /* Add a photo directly to an already-logged session — each row gets its own capture input
+         (a shared id won't work since several rows render at once, unlike the single Log form above). */
+      Array.prototype.forEach.call(document.querySelectorAll(".wk-row-photo-input"), function(input){
+        input.addEventListener("change", function(){
+          var file = input.files && input.files[0];
+          if(!file) return;
+          var wid = input.getAttribute("data-wk-photo");
+          var reader = new FileReader();
+          reader.onload = function(e){
+            var img = new Image();
+            img.onload = function(){
+              var maxDim = 640, scale = Math.min(1, maxDim/Math.max(img.width,img.height));
+              var w = Math.max(1,Math.round(img.width*scale)), h = Math.max(1,Math.round(img.height*scale));
+              var canvas = document.createElement("canvas"); canvas.width=w; canvas.height=h;
+              canvas.getContext("2d").drawImage(img,0,0,w,h);
+              var dataUrl = canvas.toDataURL("image/jpeg", 0.7);
+              var wk = state.workouts.filter(function(x){ return x.id===wid; })[0];
+              if(wk){ wk.photos = wk.photos||[]; wk.photos.push(dataUrl); save(); renderViews(); }
+            };
+            img.src = e.target.result;
+          };
+          reader.readAsDataURL(file);
+        });
       });
       Array.prototype.forEach.call(document.querySelectorAll("[data-del-workout]"), function(btn){
         btn.addEventListener("click", function(){
@@ -12136,6 +12247,7 @@
         if(!file) return;
         var forTripId = trvPhotoInput.getAttribute("data-trv-photo-trip") || "";
         var forPlaceId = trvPhotoInput.getAttribute("data-trv-photo-place") || null;
+        var forDate = trvPhotoInput.getAttribute("data-trv-photo-date") || todayISO(); // which trip day this photo belongs to
         var reader = new FileReader();
         reader.onload = function(e){
           var img = new Image();
@@ -12145,7 +12257,7 @@
             var canvas = document.createElement("canvas"); canvas.width=w; canvas.height=h;
             canvas.getContext("2d").drawImage(img,0,0,w,h);
             var dataUrl = canvas.toDataURL("image/jpeg", 0.7);
-            state.travel.photos.push(normalizeTravelPhoto({ id:uid(), tripId:forTripId, placeId:forPlaceId, dataUrl:dataUrl, date:todayISO(), createdAt:todayISO() }));
+            state.travel.photos.push(normalizeTravelPhoto({ id:uid(), tripId:forTripId, placeId:forPlaceId, dataUrl:dataUrl, date:forDate, createdAt:todayISO() }));
             save(); renderViews();
           };
           img.src = e.target.result;
