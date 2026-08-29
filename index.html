@@ -1469,11 +1469,12 @@
   .trv-mini-num{ font-family:'IBM Plex Mono',monospace; font-size:1.3rem; font-weight:600; color:var(--ink); line-height:1; }
   .trv-mini-label{ font-size:.72rem; color:var(--ink-faint); margin-top:4px; }
 
-  .trv-map-wrap{ background:var(--surface-2); border-radius:14px; padding:10px; overflow:hidden; }
+  .trv-map-wrap{ background:color-mix(in srgb, var(--ink) 7%, var(--surface-2)); border-radius:14px; padding:16px; overflow:hidden; }
   .trv-map-svg{ width:100%; height:auto; display:block; }
-  .trv-map-land{ fill:var(--border-soft); stroke:var(--border); stroke-width:1; }
+  .trv-map-grid{ stroke:var(--ink); stroke-width:.6; opacity:.06; }
+  .trv-map-land{ fill:color-mix(in srgb, var(--teal) 32%, var(--surface)); stroke:color-mix(in srgb, var(--teal) 60%, var(--surface)); stroke-width:1.1; stroke-linejoin:round; }
   .trv-map-marker{ cursor:pointer; }
-  .trv-map-marker circle{ transition:r .15s ease; }
+  .trv-map-marker circle{ transition:r .15s ease; filter:drop-shadow(0 1px 2px rgba(20,18,10,.35)); }
   .trv-map-marker:hover circle{ r:9; }
   .trv-map-legend{ display:flex; gap:16px; flex-wrap:wrap; margin-top:12px; }
   .trv-legend-item{ display:inline-flex; align-items:center; gap:6px; font-size:.76rem; color:var(--ink-soft); }
@@ -9041,24 +9042,110 @@
      continent outlines) — not a tile/API-backed map. Markers are one dot per country (places are
      only ever plotted at the country's centroid — see COUNTRY_CENTROIDS), clustered by count
      since multiple places in the same country share one centroid. Clicking a dot opens a
-     click-to-preview popover listing what's there. This is disclosed in the page caption. */
-  var TRAVEL_MAP_W = 1000, TRAVEL_MAP_H = 500;
+     click-to-preview popover listing what's there. This is disclosed in the page caption.
+     v23.1: reworked after feedback that the first pass (6 coarse hexagon-ish blobs) looked crude.
+     Fix was two things together, not just one: (a) far more coastline points per landmass — the
+     ugliness was mostly too few vertices, the same reason any low-poly map looks bad — plus small
+     separate islands (UK/Ireland, Japan, Madagascar, Indonesia, NZ, Greenland) that make the
+     silhouette actually readable at a glance; (b) a light Catmull-Rom smoothing pass over the
+     projected points (trvSmoothPath) so corners round off into soft "journal map" blobs instead of
+     hard polygon edges, matching the mockup's stylized look rather than a technical vector map. The
+     coastlines below are still a hand-simplified approximation, not survey data — precision was
+     never the goal, recognizability was. */
+  var TRAVEL_MAP_W = 1000, TRAVEL_MAP_H = 460;
+  var TRAVEL_LAT_TOP = 78, TRAVEL_LAT_BOTTOM = -58; // crops the mostly-empty polar bands so continents fill the frame
   function trvProject(lat, lng){
-    return { x: (lng+180)/360*TRAVEL_MAP_W, y: (90-lat)/180*TRAVEL_MAP_H };
+    return {
+      x: (lng+180)/360*TRAVEL_MAP_W,
+      y: (TRAVEL_LAT_TOP-lat)/(TRAVEL_LAT_TOP-TRAVEL_LAT_BOTTOM)*TRAVEL_MAP_H
+    };
+  }
+  /* Closed-loop Catmull-Rom → cubic Bezier smoothing. A low tension divisor (10, vs. the usual 6)
+     keeps the curve close to the original points — softened corners, not a distorted blob. */
+  /* Catmull-Rom-to-Bezier smoothing with tangent clamping: a raw Catmull-Rom tangent can overshoot
+     past a neighboring point when the coastline sequence turns sharply (a peninsula tip, a strait),
+     which is what produced self-intersecting spikes/loops in the first pass. Clamping each tangent's
+     length to a fraction of the shorter adjacent edge keeps sharp corners crisp instead of looping,
+     while gentle stretches still round out smoothly. */
+  function trvSmoothPath(pts){
+    var n = pts.length;
+    if(n<3) return "";
+    function dist(a,b){ return Math.hypot(b.x-a.x, b.y-a.y); }
+    function tangent(a,b,c){
+      var v1x=b.x-a.x, v1y=b.y-a.y, v2x=c.x-b.x, v2y=c.y-b.y;
+      var l1=Math.hypot(v1x,v1y), l2=Math.hypot(v2x,v2y);
+      if(l1===0||l2===0) return {x:0,y:0};
+      var cos = (v1x*v2x+v1y*v2y)/(l1*l2);
+      // A near-180° reversal (a true cusp, e.g. a thin cape or a peninsula tip) can't be smoothed
+      // without folding into a loop — treat it as a hard corner instead of extending a tangent.
+      if(cos < -0.2) return {x:0,y:0};
+      var tx=(c.x-a.x)/2, ty=(c.y-a.y)/2;
+      var len = Math.hypot(tx,ty);
+      var cap = Math.min(l1,l2) * 0.5;
+      if(len>cap && len>0){ var s=cap/len; tx*=s; ty*=s; }
+      return {x:tx,y:ty};
+    }
+    var d = "M"+pts[0].x.toFixed(1)+","+pts[0].y.toFixed(1)+" ";
+    for(var i=0;i<n;i++){
+      var p0=pts[(i-1+n)%n], p1=pts[i], p2=pts[(i+1)%n], p3=pts[(i+2)%n];
+      var t1 = tangent(p0,p1,p2), t2 = tangent(p1,p2,p3);
+      var c1x=p1.x+t1.x/3, c1y=p1.y+t1.y/3;
+      var c2x=p2.x-t2.x/3, c2y=p2.y-t2.y/3;
+      d += "C"+c1x.toFixed(1)+","+c1y.toFixed(1)+" "+c2x.toFixed(1)+","+c2y.toFixed(1)+" "+p2.x.toFixed(1)+","+p2.y.toFixed(1)+" ";
+    }
+    return d+"Z";
   }
   var TRAVEL_CONTINENT_BLOBS = [
-    [[-165,68],[-140,70],[-95,75],[-60,62],[-52,47],[-65,45],[-80,25],[-97,18],[-105,20],[-115,30],[-124,40],[-125,49],[-135,58],[-165,68]],
-    [[-80,10],[-60,10],[-35,-5],[-35,-23],[-58,-35],[-68,-55],[-75,-45],[-81,-20],[-80,10]],
-    [[-10,43],[-5,50],[5,60],[20,70],[30,65],[40,55],[40,45],[28,40],[15,38],[-5,36],[-10,43]],
-    [[-17,15],[0,37],[10,37],[20,32],[33,31],[43,12],[51,10],[43,-5],[35,-25],[20,-35],[15,-25],[12,-5],[10,5],[-10,10],[-17,15]],
-    [[28,42],[40,45],[45,55],[60,70],[90,75],[130,70],[140,55],[130,45],[122,25],[105,10],[95,5],[80,8],[70,20],[60,25],[48,30],[35,35],[28,42]],
-    [[113,-22],[122,-18],[135,-12],[145,-17],[153,-27],[150,-38],[140,-38],[129,-32],[115,-34],[113,-22]]
+    // North America (incl. Central America) — Alaska, Hudson Bay, Florida, Gulf of Mexico, Baja
+    [[-165,60],[-165,68],[-150,71],[-125,72],[-95,73],[-80,73],[-75,68],[-80,63],[-85,66],[-92,68],[-95,63],[-85,58],[-78,56],[-65,60],[-65,55],[-55,53],[-55,47],[-59,45],[-64,45],[-66,44],[-70,42],[-74,40],[-75,37],[-76,35],[-79,33],[-80,28],[-80,25.2],[-80.5,25],[-82,27],[-84,30],[-89,30],[-94,29.5],[-97,26],[-97,22],[-93,18.5],[-97,16],[-92,15],[-90,14],[-86,13],[-83,9],[-82,8],[-84,10],[-87,13],[-91,13.7],[-97,16],[-105,20],[-105,21],[-109,22],[-110,24],[-112,28],[-115,30],[-117,32.5],[-120,34.5],[-122,37.5],[-124,40],[-124,44],[-124,47],[-125,49],[-128,52],[-132,54],[-135,58],[-141,60],[-149,61],[-158,58],[-165,60]],
+    // Greenland (separate landmass, near Canada)
+    [[-45,60],[-42,64],[-25,70],[-20,76],[-22,81],[-35,83],[-50,82],[-65,80],[-73,78],[-71,73],[-68,70],[-54,66],[-48,62],[-45,60]],
+    // South America — Amazon-mouth shoulder, Patagonia taper
+    [[-72,12],[-68,11],[-61,10.5],[-59,8],[-51,4],[-48,-1],[-45,-3],[-38,-8],[-35,-6.5],[-37,-11],[-39,-13],[-41,-18],[-40,-22],[-48,-25],[-48,-28],[-53,-33],[-57,-34.5],[-58,-36],[-62,-39],[-65,-42],[-67,-46],[-68,-50],[-70,-53],[-69,-55],[-71,-54],[-73,-52],[-73,-47],[-72,-42],[-73,-38],[-71,-33],[-70,-27],[-71,-20],[-70,-15],[-77,-12],[-81,-6],[-80,-3],[-79,2],[-77,4],[-77,7],[-75,9],[-72,12]],
+    // Europe (cut at the Bosphorus / Urals — Asia continues from there)
+    [[-9,43],[-9,38.5],[-7,37],[-4,36.2],[-1,37],[3,42.5],[7,43.5],[9,44],[10,42],[12.4,41.9],[14,40.6],[15.9,38.2],[16.4,38.1],[17,39.8],[17.9,40.5],[18.5,40.1],[16.9,41.2],[14.2,42.5],[13.6,43.6],[12.3,44.5],[13.5,45.3],[13.9,45.6],[13.8,44.9],[16,43.5],[18.1,42.7],[19.1,42.1],[19.4,41.3],[19.8,40],[20.7,39.4],[23,39.5],[26,39],[27,38],[26.5,40],[29,41],[33,45],[35,46],[38,47.5],[38,49],[35,51],[32,52.5],[30,55],[28,60],[24,65],[18,58],[12.5,56],[11,58.5],[10,63],[6,62],[5,58],[8,58],[9,57],[8,55],[9,54.5],[10.5,54],[9,54],[8,53.5],[6.9,53.3],[4.8,51.5],[1.6,51],[-1.5,49.7],[-2,49],[-4.5,48.3],[-4.8,48.6],[-1.9,49.7],[1.3,50.9],[3.4,51.3],[-9,43]],
+    // Britain & Ireland
+    [[-5.3,50.1],[-2.9,50.7],[-1.4,50.7],[0.3,50.9],[1.4,51.1],[0.7,52.9],[-0.5,53.7],[1.7,54.6],[-1.2,55.9],[-2.1,57.7],[-3.1,58.6],[-5.2,58.5],[-5.6,57],[-5.9,56.5],[-5.3,56],[-6,55.3],[-4.8,54.6],[-5.3,50.1]],
+    [[-8.4,51.6],[-6.5,52],[-6.2,53.2],[-6,54],[-7.3,55.2],[-8.2,54.3],[-9.9,53.8],[-10.2,52.2],[-9.5,51.5],[-8.4,51.6]],
+    // Africa — Gulf of Guinea notch, Horn of Africa, Cape
+    [[-17,21],[-16,16],[-13,8.5],[-11,7],[-8,5],[-4,5.2],[1,5.6],[3,6.3],[5,4],[8.5,4.4],[9,2.5],[8.7,-0.7],[11,-2.5],[12,-5],[13.5,-6],[12,-9],[13.4,-12],[12.5,-15],[13,-17],[12,-18],[14.5,-22.2],[17,-23],[15,-27],[18,-34.4],[22,-34.4],[26,-33.7],[28,-32.6],[32.9,-27],[35,-24],[35.5,-20],[40.5,-14.5],[40.4,-10],[42,-5],[42.8,-0.4],[41.6,2.8],[45,10.5],[51.4,12],[45,11.5],[43.3,12.5],[43,13],[42,15],[39.8,15.5],[37.3,18.5],[35.4,22],[33.9,27.5],[35,31.5],[33,31.6],[25,31.6],[19,32.5],[11.6,33.2],[10.2,37],[9.5,32.8],[3,36.8],[0,35.2],[-2,35],[-6,35.5],[-6.9,33.9],[-9.5,32.6],[-9.7,30.4],[-13,27.8],[-16,21],[-17,21]],
+    // Madagascar
+    [[43.2,-12],[45,-15.9],[47.5,-16.4],[47.1,-20],[47.5,-23.4],[45,-25.5],[43.4,-22],[43.3,-17],[43.2,-12]],
+    // Asia (huge) — Arabian peninsula, India, SE Asia, Kamchatka hook
+    [[35,51],[42,47],[48,42],[48,40],[52,47],[55,46],[52,52],[60,54],[68,55],[62,68],[70,73],[90,75],[112,73],[140,73],[152,68],[160,66],[166,60],[163,56],[158,52],[155,50],[150,48],[141,43],[132,43],[129,37.5],[126,34.5],[129,35],[131,34.5],[128,36],[125,38],[122,31],[121,25],[117,23],[110,21],[108,21],[106,10.4],[105,9],[103,1.4],[101,4],[98,8],[94,16],[92,22],[88,22],[85,20],[80,7],[77,8],[73,15],[72,21.5],[69,22.5],[67,24],[61,25.4],[57,26.4],[56,27],[51,29.5],[48.5,30],[48,29.6],[49.5,28],[50.5,26.5],[51.5,25.8],[52.5,25.3],[54.3,25.4],[56.3,26.1],[58.5,23.6],[59.8,22.5],[58,20],[54,17],[50,15],[45.5,12.8],[43.5,12.5],[42.8,16],[41.5,20],[39,24],[37,28],[35,29],[33.5,31],[32,31.5],[29,41],[35,44],[38,47.5],[35,51]],
+    // Japan — Honshu/Kyushu/Shikoku
+    [[130,31.2],[131,33.5],[130,34],[133,34.4],[135,33.5],[136,34.6],[138,34.6],[139.8,35.6],[140.9,37],[141,39],[140.5,41],[139.8,38],[138,37.9],[137.3,36.7],[133.2,35.5],[130,35.5],[129.4,34.6],[129.9,33.3],[130,31.2]],
+    // Hokkaido (separate island, north of the Tsugaru Strait)
+    [[140.3,41.5],[140,43.5],[142,44.5],[145,43.5],[144,42.5],[141.5,41.5],[140.3,41.5]],
+    // Indonesia / Philippines (simplified as one loose archipelago blob)
+    [[95.3,5.5],[97,4],[100,3.5],[103.5,1],[104,-1],[106,-3],[106,-6],[108,-6.9],[112,-7],[114,-8],[116,-9],[119,-9],[120,-9.8],[123,-9],[124,-8.5],[125,-9],[131,-3],[135,-4],[140,-2.5],[141,-2.5],[140,1],[134,0.9],[130,1],[124,10],[122,11],[120,15],[122,18],[120,16],[118,10],[117,5],[113,4],[110,1],[102,2],[99,3],[95.3,5.5]],
+    // Australia
+    [[113.3,-22],[114,-21],[113.6,-25.5],[113.4,-26],[115,-29],[115,-31.9],[115.7,-33.6],[117.8,-35],[121,-34],[124,-32.3],[129,-31.5],[131,-31.5],[133.7,-32.2],[135,-34.4],[136.8,-35.1],[137.8,-35.6],[139.8,-36.1],[140,-38],[143,-38.7],[145,-38.4],[146.4,-38.7],[148.3,-37.7],[150,-37],[150.2,-35.5],[153.2,-30.3],[153.5,-28.6],[151.7,-24.4],[150,-22.4],[148.8,-20.3],[146,-19],[145.9,-16.7],[143.5,-14.3],[141.6,-12.4],[141.9,-11],[137.5,-16],[136.4,-13.7],[135.8,-11.8],[132,-11.3],[130,-12.4],[129.6,-14.8],[127,-14.1],[124.4,-14.9],[123,-17],[121.6,-17.3],[114.6,-21.5],[113.3,-22]],
+    // Tasmania
+    [[144.7,-40.8],[146.4,-41.1],[148,-40.8],[148.3,-42.2],[147.9,-43.3],[146.3,-43.5],[144.9,-41.2],[144.7,-40.8]],
+    // New Zealand — north + south island
+    [[172.7,-34.4],[174.3,-35],[175.8,-37],[178.5,-37.6],[177.9,-39.2],[176.9,-39.1],[175,-41.3],[174.8,-39.5],[173.8,-39.1],[173,-38],[172.7,-34.4]],
+    [[173.2,-40.5],[174.3,-41.3],[173.9,-43.5],[171,-42.5],[168.4,-43.8],[166.4,-45.4],[167.9,-46.6],[169.8,-46.4],[170.5,-45.9],[173,-43.3],[173.2,-40.5]]
   ];
   function travelBlobsSVG(){
     return TRAVEL_CONTINENT_BLOBS.map(function(pts){
-      var d = pts.map(function(pt,i){ var xy=trvProject(pt[1],pt[0]); return (i===0?"M":"L")+xy.x.toFixed(1)+","+xy.y.toFixed(1); }).join(" ")+" Z";
-      return '<path d="'+d+'" class="trv-map-land"/>';
+      var projected = pts.map(function(pt){ return trvProject(pt[1], pt[0]); });
+      return '<path d="'+trvSmoothPath(projected)+'" class="trv-map-land"/>';
     }).join("");
+  }
+  /* Faint graticule (every 30° longitude, 20° latitude) — a small cartographic touch that reads
+     as "this is a map" at a glance, purely decorative, not used for anything functional. */
+  function travelGraticuleSVG(){
+    var lines = "";
+    for(var lng=-180; lng<=180; lng+=30){
+      var a = trvProject(TRAVEL_LAT_TOP, lng), b = trvProject(TRAVEL_LAT_BOTTOM, lng);
+      lines += '<line x1="'+a.x.toFixed(1)+'" y1="'+a.y.toFixed(1)+'" x2="'+b.x.toFixed(1)+'" y2="'+b.y.toFixed(1)+'" class="trv-map-grid"/>';
+    }
+    for(var lat=-40; lat<=60; lat+=20){
+      var l = trvProject(lat,-180), r = trvProject(lat,180);
+      lines += '<line x1="'+l.x.toFixed(1)+'" y1="'+l.y.toFixed(1)+'" x2="'+r.x.toFixed(1)+'" y2="'+r.y.toFixed(1)+'" class="trv-map-grid"/>';
+    }
+    return lines;
   }
   function travelCountryMarkers(){
     var byCountry = {};
@@ -9075,6 +9162,7 @@
   function travelMapPageHTML(){
     var markers = travelCountryMarkers();
     var mapSvg = '<svg viewBox="0 0 '+TRAVEL_MAP_W+' '+TRAVEL_MAP_H+'" class="trv-map-svg" data-trv-map>'+
+      travelGraticuleSVG()+
       travelBlobsSVG()+
       markers.map(function(m){
         var c = COUNTRY_CENTROIDS[m.countryCode];
@@ -9391,6 +9479,7 @@
     var c = COUNTRY_CENTROIDS[p.countryCode];
     var xy = trvProject(c[0], c[1]);
     var mapSvg = '<svg viewBox="0 0 '+TRAVEL_MAP_W+' '+TRAVEL_MAP_H+'" class="trv-map-svg">'+
+      travelGraticuleSVG()+
       travelBlobsSVG()+
       '<g transform="translate('+xy.x.toFixed(1)+','+xy.y.toFixed(1)+')"><circle r="10" fill="'+placeStatusMeta(p.status).color+'" stroke="#fff" stroke-width="2"/></g>'+
     '</svg>';
