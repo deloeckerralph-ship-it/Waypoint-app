@@ -1989,20 +1989,55 @@
       .slice().sort(function(a,b){ return a.startDate<b.startDate?-1:1; }).slice(0, limit||5);
   }
 
+  /* WorkoutSession (v25) — this IS the WorkoutSession record the spec asks for; state.workouts was
+     already exactly that (one completed/logged session per entry), so it was extended in place
+     rather than split into a second array, matching this codebase's established "extend
+     normalize(), don't replace" convention (Library's book migration, Challenges' Ironman
+     migration). `type` is the broad training category (running/crossfit/strength/stretching/
+     cycling/swimming/other); `resultType` is the scoring/result shape (amrap/for_time/ladder/run/
+     run_intervals/strength/stretching/manual) and drives which structured sub-object is filled in
+     and how wkDisplayResult()/the comparison engine read it. "emom"/"tabata"/"custom" are reserved
+     resultType values (see WORKOUT_RESULT_TYPES below) with no template/player built for them yet —
+     architecture only, per the spec's own phase-4 deferral. Never store only a display string —
+     amrap/forTime/ladder/run/runIntervals/strength are the structured data; wkDisplayResult()
+     always regenerates the human-readable line from them. */
   function normalizeWorkout(w){
     return {
       id: w.id || uid(),
       type: w.type || "other",
+      resultType: w.resultType || (w.type==="stretching" ? "stretching" : "manual"),
       date: w.date || todayISO(),
-      duration: (typeof w.duration==="number") ? w.duration : 0,
+      startedAt: w.startedAt || null,          // "HH:MM", when known (players record it; manual log can leave it blank)
+      duration: (typeof w.duration==="number") ? w.duration : 0, // minutes — kept as the one cross-feature field Home/Calendar/Challenges already read by name
       notes: w.notes || "",
       photos: Array.isArray(w.photos) ? w.photos : [], // dataURLs, snapped straight from camera or picked from gallery
-      routineId: w.routineId || null,       // links back to a built-in WORKOUT_ROUTINES entry, when this came from the Library
-      routineName: w.routineName || "",     // denormalized display name at completion time (survives routine list changes)
-      feeling: w.feeling || "",             // optional post-routine mood: "much_better" | "better" | "same"
+      routineId: w.routineId || null,       // links back to a built-in WORKOUT_ROUTINES template, when this came from the Library
+      routineName: w.routineName || "",     // denormalized display name at completion time (survives template-list changes)
+      feeling: w.feeling || "",             // optional post-workout mood: "much_better" | "better" | "same" | "great" | "good" | "okay" | "hard" | "very_hard"
+      effort: (typeof w.effort==="number") ? w.effort : null, // optional RPE, 1-10
+      completed: (w.completed===false) ? false : true,        // false = saved incomplete (abandoned mid-workout), excluded from PB math
+      challengeId: w.challengeId || null,   // optional explicit link — never set silently (see the v24/v25 doc sections)
+      source: w.source || "manual",         // "manual" | "waypoint_timer" | reserved: garmin/whoop/apple_health/health_connect/import — nothing but the first two is ever actually set
+      externalId: w.externalId || null,
+      externalSource: w.externalSource || null,
+      loadValue: (typeof w.loadValue==="number") ? w.loadValue : null,  // CrossFit dumbbell load, when relevant
+      loadUnit: w.loadUnit || "kg",
+      loadConfig: w.loadConfig || "",       // e.g. "Pair" / "Single" — free text, matches spec's example
+      // Structured result sub-objects — only the one matching resultType is ever populated.
+      amrap: w.amrap ? { rounds:numOr0(w.amrap.rounds), partialReps:numOr0(w.amrap.partialReps), repsPerRound:numOr0(w.amrap.repsPerRound), timeCapSeconds:numOr0(w.amrap.timeCapSeconds) } : null,
+      forTime: w.forTime ? { durationSeconds:numOr0(w.forTime.durationSeconds), timeCapSeconds: (typeof w.forTime.timeCapSeconds==="number")?w.forTime.timeCapSeconds:null, completedWithinCap: w.forTime.completedWithinCap!==false, remainingReps: (typeof w.forTime.remainingReps==="number")?w.forTime.remainingReps:null } : null,
+      ladder: w.ladder ? { highestRound:numOr0(w.ladder.highestRound), partialReps:numOr0(w.ladder.partialReps), ladderStep:numOr0(w.ladder.ladderStep)||1 } : null,
+      run: w.run ? { distanceKm: (typeof w.run.distanceKm==="number")?w.run.distanceKm:null, durationSeconds:numOr0(w.run.durationSeconds), avgHeartRate:(typeof w.run.avgHeartRate==="number")?w.run.avgHeartRate:null, elevationGainM:(typeof w.run.elevationGainM==="number")?w.run.elevationGainM:null } : null,
+      runIntervals: Array.isArray(w.runIntervals) ? w.runIntervals.map(function(iv){ return { legIndex:numOr0(iv.legIndex), label:iv.label||"", durationSeconds: (typeof iv.durationSeconds==="number")?iv.durationSeconds:null, completed: iv.completed!==false }; }) : null,
+      strength: Array.isArray(w.strength) ? w.strength.map(function(ex){ return { name: ex.name||"", sets: Array.isArray(ex.sets) ? ex.sets.map(function(s){ return { weight:(typeof s.weight==="number")?s.weight:null, unit:s.unit||"kg", reps:numOr0(s.reps), rpe:(typeof s.rpe==="number")?s.rpe:null, completed: s.completed!==false }; }) : [] }; }) : null,
       createdAt: w.createdAt || todayISO()
     };
   }
+  function numOr0(v){ return (typeof v==="number" && !isNaN(v)) ? v : 0; }
+  // Reserved for future result types — emom/tabata have no template or player built yet (spec's
+  // own phase-4 note: "the first version does not need many EMOM templates, but the result
+  // architecture should support it"); custom is reserved for a future "Create workout" builder.
+  var WORKOUT_RESULT_TYPES = ["amrap","for_time","ladder","emom","tabata","strength","run","run_intervals","stretching","manual","custom"];
   function normalizeHabit(h, idx){
     return {
       id: h.id || uid(),
@@ -3283,11 +3318,33 @@
   var wkExpandedMovementIdx = null;  // which movement row is expanded on the routine detail page
   var wkShowSchedule = false;        // Schedule modal open on the routine detail page
   var wkShowTransitions = false;     // optional 5s "up next" transition between movements — default OFF per spec
-  var wkPlayer = null;               // { routineId, index, remaining, paused, sourceBlockId } while a routine is running
-  var wkPlayerTimer = null;          // interval handle, not persisted
+  var wkPlayer = null;               // { routineId, index, remaining, paused, sourceBlockId } — the Stretching 60s-per-movement player (v24, unchanged)
+  var wkPlayerTimer = null;          // interval handle for the Stretching player, not persisted
   var wkCompletion = null;           // { routine, durationMin, completedAt, feeling, note, savedWorkoutId } shown on the finish screen
   var wkShowCompletionNote = false;
   var wkHistoryFilter = "all";       // 'all' | 'training' | 'recovery' — History tab split (stretching = recovery)
+  var wkHistoryTemplateId = null;    // set by "View history" on a template detail page — filters History to just that template
+
+  /* ---- v25 players: AMRAP/For Time/Ladder/Running-intervals/Running-continuous/Strength. Each
+     is its own small state object (only one is ever non-null at a time) with `startedAt`/`pausedAt`
+     epoch-ms timestamps rather than a plain decrementing counter (spec §67 — "derive elapsed time
+     from timestamps rather than only decrementing a number in memory"), so a re-render or a missed
+     tick never drifts the clock. A single shared interval (wkGenericTicker, see the engine below)
+     just re-renders every second while any of these is running; the real time comes from
+     wkElapsedMs(), not the interval's own call count. */
+  var wkAmrapPlayer = null;          // { routineId, sourceBlockId, startedAt, pausedAt, totalPausedMs, rounds, roundTimestamps:[] }
+  var wkAmrapPartialForm = false;    // showing the "add partial reps" per-movement entry step
+  var wkForTimePlayer = null;        // { routineId, sourceBlockId, startedAt, pausedAt, totalPausedMs }
+  var wkForTimeResultForm = null;    // { autoCapped } — shown once finished/capped, before the full completion screen
+  var wkLadderPlayer = null;         // { routineId, sourceBlockId, startedAt, pausedAt, totalPausedMs }
+  var wkLadderResultForm = false;
+  var wkRunIntervalPlayer = null;    // { routineId, sourceBlockId, legIndex, phase:'work'|'recover', startedAt, recoverRemaining, results:[{legIndex,durationSeconds}] }
+  var wkRunContinuousPlayer = null;  // { routineId, sourceBlockId, startedAt, pausedAt, totalPausedMs } — routineId is null for a from-scratch manual "Start" (e.g. from the Log form's Start button)
+  var wkRunResultForm = false;       // showing the post-run distance/pace entry form
+  var wkGenericTicker = null;        // interval handle shared by the five players above
+  var wkManualLogType = "running";   // active tab in the "+ Log workout" manual form: running|crossfit|strength|stretching|cycling|swimming|other
+  var wkStrengthDraft = null;        // { exercises:[{name,sets:[{weight,reps,rpe,completed}]}] } — staged while filling out a Strength log/session
+  var wkOverviewWeekOffset = 0;      // "M T W T F S S" rhythm strip — 0 = this week
 
   /* ---- Today nav/UI state — Today is the execution layer of the same daily-plan data Calendar
      plans with (state.timeBlocks/state.dayNotes), browsed independently of Calendar's own view state ---- */
@@ -5379,12 +5436,55 @@
     "chin-tucks":             { name:"Chin tucks + gentle neck stretch", category:"neck",  instructions:"Draw your chin straight back to lengthen the back of your neck, then gently tilt your head side to side. Keep your shoulders relaxed and down." },
     "upper-back-hug-stretch": { name:"Upper-back hug stretch", category:"upper",  instructions:"Wrap your arms around yourself in a hug and round your upper back slightly. Reach your shoulder blades apart and hold." },
     "shoulder-stretch":       { name:"Shoulder stretch", category:"upper",  instructions:"Bring one arm across your body at shoulder height and gently press it closer with your other arm. Keep your shoulder down and relaxed." },
-    "thread-the-needle":      { name:"Thread the needle", category:"upper",  instructions:"From hands and knees, slide one arm underneath your body and rest your shoulder and ear on the mat. Keep the movement slow and supported." }
+    "thread-the-needle":      { name:"Thread the needle", category:"upper",  instructions:"From hands and knees, slide one arm underneath your body and rest your shoulder and ear on the mat. Keep the movement slow and supported." },
+
+    /* CrossFit movements (v25) — dumbbell/bodyweight, reused across the 30 built-in CrossFit
+       templates below rather than duplicating a description inside every workout. */
+    "db-thruster":        { name:"DB Thruster", category:"crossfit", equipment:"Dumbbells", instructions:"Hold a dumbbell in each hand at shoulder height. Squat down, then drive up explosively, pressing the dumbbells overhead as your legs straighten." },
+    "burpee":             { name:"Burpee", category:"crossfit", equipment:"None", instructions:"Drop into a squat, kick your feet back to a plank, do a push-up, jump your feet back in, then jump up with your arms overhead." },
+    "air-squat":          { name:"Air Squat", category:"crossfit", equipment:"None", instructions:"Stand with feet shoulder-width apart, sit your hips back and down until thighs are at least parallel to the floor, then drive back up." },
+    "db-romanian-deadlift": { name:"DB Romanian Deadlift", category:"crossfit", equipment:"Dumbbells", instructions:"Holding dumbbells in front of your thighs, hinge at the hips and lower them along your legs, keeping a slight bend in the knees, then drive your hips forward to stand." },
+    "goblet-squat":       { name:"Goblet Squat", category:"crossfit", equipment:"Dumbbell", instructions:"Hold one dumbbell vertically against your chest. Squat down keeping your chest tall, then stand back up." },
+    "db-push-press":      { name:"DB Push Press", category:"crossfit", equipment:"Dumbbells", instructions:"Dumbbells at shoulder height, dip your knees slightly then drive up through your legs to press the weights overhead." },
+    "mountain-climber":   { name:"Mountain Climbers", category:"crossfit", equipment:"None", instructions:"From a plank position, drive your knees toward your chest one at a time at a quick, controlled pace." },
+    "db-clean-press":     { name:"DB Clean & Press", category:"crossfit", equipment:"Dumbbells", instructions:"Pull the dumbbells from the floor to your shoulders in one motion, then press them overhead." },
+    "pushup":             { name:"Push-up", category:"crossfit", equipment:"None", instructions:"From a plank, lower your chest to the floor keeping your body in a straight line, then press back up." },
+    "reverse-lunge":      { name:"Reverse Lunge", category:"crossfit", equipment:"None", instructions:"Step one leg back and lower your rear knee toward the floor, then push through your front foot to return to standing. Alternate sides." },
+    "situp":              { name:"Sit-up", category:"crossfit", equipment:"Mat", instructions:"Lying on your back with knees bent, curl your torso up to a sitting position, then lower back down with control." },
+    "db-deadlift":        { name:"DB Deadlift", category:"crossfit", equipment:"Dumbbells", instructions:"Dumbbells on the floor in front of you, hinge down keeping your back flat, grip the weights and drive through your heels to stand tall." },
+    "db-hang-clean":      { name:"DB Hang Clean", category:"crossfit", equipment:"Dumbbells", instructions:"From a standing hinge with dumbbells at thigh height, explosively extend your hips and pull the weights up to your shoulders." },
+    "vup":                { name:"V-up", category:"crossfit", equipment:"Mat", instructions:"Lying flat, simultaneously lift your legs and torso to meet in a V shape, reaching your hands toward your feet, then lower with control." },
+    "db-alt-lunge":       { name:"Alternating DB Lunge", category:"crossfit", equipment:"Dumbbells", instructions:"Holding a dumbbell in each hand, step forward into a lunge, then return and alternate legs each rep." },
+    "db-sumo-deadlift":   { name:"DB Sumo Deadlift", category:"crossfit", equipment:"Dumbbell", instructions:"Feet wide, toes turned out, hold one dumbbell with both hands between your legs. Hinge down and drive back up through your heels." },
+    "squat-jump":         { name:"Squat Jump", category:"crossfit", equipment:"None", instructions:"Squat down, then explode upward into a jump, landing softly back into the next squat." },
+    "db-strict-press":    { name:"DB Strict Press", category:"crossfit", equipment:"Dumbbells", instructions:"Dumbbells at shoulder height, press them straight overhead without using your legs, then lower with control." },
+    "suitcase-deadlift":  { name:"Suitcase Deadlift", category:"crossfit", equipment:"Dumbbell", instructions:"Hold one dumbbell at your side like a suitcase. Hinge at the hips to lower it toward the floor, then stand tall, keeping your torso upright." },
+    "db-russian-twist":   { name:"DB Russian Twist", category:"crossfit", equipment:"Dumbbell", instructions:"Sit with knees bent and lean back slightly, holding a dumbbell with both hands. Rotate your torso side to side, tapping the weight near the floor each side." },
+    "db-push-jerk":       { name:"DB Push Jerk", category:"crossfit", equipment:"Dumbbells", instructions:"Dumbbells at shoulder height, dip and drive the weights overhead while dropping slightly under them to lock out, then stand tall." },
+    "db-burpee-clean-press": { name:"DB Burpee Clean & Press", category:"crossfit", equipment:"Dumbbells", instructions:"Perform a burpee with dumbbells on the floor beside you, then at the top pull them to your shoulders and press overhead." },
+    "front-rack-squat":   { name:"DB Front Rack Squat", category:"crossfit", equipment:"Dumbbells", instructions:"Hold the dumbbells at your shoulders, elbows up. Squat down keeping your torso upright, then drive back up." },
+    "db-alt-clean":       { name:"Alternating DB Clean", category:"crossfit", equipment:"Dumbbells", instructions:"From a hinge with dumbbells at your sides, explosively pull one dumbbell up to shoulder height, lower it, then repeat on the other side." },
+    "db-devils-press":    { name:"DB Devil's Press", category:"crossfit", equipment:"Dumbbells", instructions:"With a dumbbell in each hand, drop into a burpee, then as you stand swing the dumbbells up into an overhead press in one motion." },
+    "db-swing":           { name:"DB Swing", category:"crossfit", equipment:"Dumbbell", instructions:"Hold one dumbbell with both hands, hinge at the hips to swing it back between your legs, then drive your hips forward to swing it up to chest height." },
+    "db-clean-jerk":      { name:"DB Clean & Jerk", category:"crossfit", equipment:"Dumbbells", instructions:"Pull the dumbbells to your shoulders in one motion, then dip and drive them overhead, dropping slightly under the weight to lock out." },
+    "situp-press":        { name:"DB Sit-up + Press", category:"crossfit", equipment:"Dumbbells", instructions:"Perform a sit-up holding light dumbbells at your shoulders, and at the top of the sit-up press them overhead before lowering back down." },
+    "db-bear-row":        { name:"DB Bear-Position Row", category:"crossfit", equipment:"Dumbbells", instructions:"From hands and knees with dumbbells under your shoulders, row one dumbbell to your ribs while keeping your hips level, then alternate sides." },
+    "db-power-clean":     { name:"DB Power Clean", category:"crossfit", equipment:"Dumbbells", instructions:"From the floor, pull the dumbbells up explosively and catch them at shoulder height in a partial squat, then stand tall." },
+    "line-hop":           { name:"Line Hops", category:"crossfit", equipment:"None", instructions:"Hop side to side (or front to back) over an imaginary line on the floor, staying light and quick on your feet." }
   };
   function movementById(id){ return MOVEMENT_LIBRARY[id] || { name:id, category:"full", instructions:"" }; }
 
   var ROUTINE_MOVEMENT_SEC = 60; // every built-in routine's default per-movement duration
   function rm(movementId, side){ return { movementId:movementId, side:side||null, durationSeconds:ROUTINE_MOVEMENT_SEC }; }
+  // CrossFit round movement: one line inside a single lap of the AMRAP/ladder/for-time round.
+  function rw(movementId, reps){ return { movementId:movementId, reps:reps }; }
+  // Running interval leg: one worked segment + what follows it. `recover` is shown as-is; when it
+  // contains a parseable "N sec"/"N min" it also drives a real countdown in the player, otherwise
+  // (e.g. "jog recovery") the player just waits for the user to tap Next — no fabricated duration.
+  function leg(work, recover){ return { work:work, recover:recover||null }; }
+  function legsUniform(reps, work, recover){
+    var out = []; for(var i=0;i<reps;i++) out.push(leg(work, i<reps-1?recover:null)); return out;
+  }
   var WORKOUT_ROUTINES = [
     { id:"full-body-reset", name:"Full Body Reset", focus:"full-body",
       description:"A calm head-to-toe stretching routine for after training or at the end of the day.",
@@ -5435,11 +5535,246 @@
       description:"A slow full-body sequence for recovery days or after harder training.",
       movements:[ rm("cat-cow"), rm("downward-dog"), rm("low-lunge","left"), rm("low-lunge","right"),
         rm("figure-four","left"), rm("figure-four","right"), rm("seated-forward-fold"), rm("lying-spinal-twist","left"),
-        rm("lying-spinal-twist","right"), rm("relaxed-breathing") ] }
+        rm("lying-spinal-twist","right"), rm("relaxed-breathing") ] },
+
+    /* ===== CrossFit (v25) — 30 built-in dumbbell/bodyweight workouts. Every one is a 20-minute
+       cap unless noted; `movements` is one lap of the round (AMRAP/ladder repeat it, for_time
+       runs the rep scheme in the description once). repsPerRound (summed from `movements`) is
+       what powers the AMRAP total-reps comparison in wkAmrapTotalReps() — see the comparison
+       engine below. */
+    { id:"cf-dumbbell-engine", name:"Dumbbell Engine", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Heavy dumbbells", difficulty:"Moderate",
+      description:"A short full-body dumbbell conditioning workout.",
+      movements:[ rw("db-thruster",10), rw("burpee",10), rw("air-squat",15), rw("db-romanian-deadlift",10) ] },
+    { id:"cf-heavy-hungry", name:"Heavy & Hungry", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Moderate",
+      description:"Squats, presses and a burpee/mountain-climber engine finisher.",
+      movements:[ rw("goblet-squat",10), rw("db-push-press",10), rw("burpee",10), rw("mountain-climber",20) ] },
+    { id:"cf-mat-attack", name:"Mat Attack", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells + mat", difficulty:"Moderate",
+      description:"A dumbbell + bodyweight combo built around the mat.",
+      movements:[ rw("db-clean-press",10), rw("pushup",10), rw("reverse-lunge",20), rw("situp",20) ] },
+    { id:"cf-full-body-grinder", name:"Full Body Grinder", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells + mat", difficulty:"Moderate",
+      description:"Deadlifts and cleans paired with push-ups and V-ups.",
+      movements:[ rw("db-deadlift",10), rw("db-hang-clean",10), rw("pushup",10), rw("vup",10) ] },
+    { id:"cf-leg-burner", name:"Leg Burner", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Hard",
+      description:"A lower-body-only AMRAP — squats, lunges and sumo deadlifts.",
+      movements:[ rw("goblet-squat",15), rw("db-alt-lunge",10), rw("db-sumo-deadlift",10), rw("squat-jump",15) ] },
+    { id:"cf-shoulder-storm", name:"Shoulder Storm", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Moderate",
+      description:"Overhead pressing paired with a burpee/mountain-climber engine piece.",
+      movements:[ rw("db-push-press",10), rw("db-strict-press",10), rw("burpee",10), rw("mountain-climber",20) ] },
+    { id:"cf-core-carry", name:"Core & Carry", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbell + mat", difficulty:"Moderate",
+      description:"Suitcase carries, twists and sit-ups for a core-focused round.",
+      movements:[ rw("suitcase-deadlift",10), rw("situp",10), rw("db-russian-twist",10), rw("burpee",10) ] },
+    { id:"cf-dumbbell-dt", name:"Dumbbell DT", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Hard",
+      description:"A dumbbell take on the classic DT rep scheme — deadlift, hang clean, push jerk.",
+      movements:[ rw("db-deadlift",12), rw("db-hang-clean",9), rw("db-push-jerk",6) ] },
+    { id:"cf-20min-beast", name:"The 20-Minute Beast", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Hard",
+      description:"Burpee clean & press leads into a squat/push-up burnout.",
+      movements:[ rw("db-burpee-clean-press",5), rw("goblet-squat",10), rw("pushup",15), rw("air-squat",20) ] },
+    { id:"cf-clean-machine", name:"Clean Machine", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells + mat", difficulty:"Moderate",
+      description:"Alternating cleans into front-rack squats, then a bodyweight finish.",
+      movements:[ rw("db-alt-clean",10), rw("front-rack-squat",10), rw("pushup",10), rw("situp",10) ] },
+    { id:"cf-no-excuses", name:"No Excuses", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells + mat", difficulty:"Moderate",
+      description:"Deadlifts, thrusters, burpees and V-ups — no filler.",
+      movements:[ rw("db-deadlift",10), rw("db-thruster",10), rw("burpee",10), rw("vup",10) ] },
+    { id:"cf-lunge-burn", name:"Lunge & Burn", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells + mat", difficulty:"Moderate",
+      description:"Lunge volume paired with pressing and a burpee finisher.",
+      movements:[ rw("db-alt-lunge",20), rw("db-push-press",10), rw("situp",15), rw("burpee",10) ] },
+    { id:"cf-dumbbell-annie", name:"Dumbbell Annie", type:"crossfit", format:"for_time", tags:["for_time"],
+      durationMin:15, equipment:"Dumbbells + mat", difficulty:"Moderate",
+      description:"A dumbbell take on \"Annie\": DB sit-ups and line hops for time, descending 20-15-10-5.",
+      repScheme:"20-15-10-5", movements:[ rw("situp",20), rw("line-hop",20) ] },
+    { id:"cf-ground-control", name:"Ground Control", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Hard",
+      description:"Devil's press leads a full-body AMRAP with a mountain-climber finish.",
+      movements:[ rw("db-devils-press",10), rw("air-squat",15), rw("pushup",10), rw("mountain-climber",20) ] },
+    { id:"cf-heavy-helen", name:"Heavy Helen", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbell", difficulty:"Moderate",
+      description:"A shorter three-movement AMRAP built around the dumbbell swing.",
+      movements:[ rw("db-swing",10), rw("burpee",10), rw("db-alt-lunge",20) ] },
+    { id:"cf-squat-press", name:"Squat & Press", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells + mat", difficulty:"Moderate",
+      description:"An even 12-12-12-12 round of squats, presses, sit-ups and burpees.",
+      movements:[ rw("goblet-squat",12), rw("db-push-press",12), rw("situp",12), rw("burpee",12) ] },
+    { id:"cf-the-grinder", name:"The Grinder", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Hard",
+      description:"Clean & jerks and deadlifts under a big push-up/squat volume.",
+      movements:[ rw("db-clean-jerk",8), rw("db-romanian-deadlift",12), rw("pushup",16), rw("air-squat",20) ] },
+    { id:"cf-core-crusher", name:"Core Crusher", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells + mat", difficulty:"Moderate",
+      description:"A core-heavy round — sit-up presses, twists, V-ups and burpees.",
+      movements:[ rw("situp-press",10), rw("db-russian-twist",20), rw("vup",10), rw("burpee",10) ] },
+    { id:"cf-single-side-suffer", name:"Single-Side Suffer", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Hard",
+      description:"Unilateral clean & press and lunges — the same total volume, done one side at a time.",
+      movements:[ rw("db-clean-press",8), rw("reverse-lunge",10), rw("pushup",10) ] },
+    { id:"cf-death-by-dumbbell", name:"Death by Dumbbell", type:"crossfit", format:"ladder", tags:["ladder"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Hard",
+      description:"An ascending ladder — 5+5, then 10+10, then 15+15 and so on, until time runs out.",
+      ladderStep:5, movements:[ rw("db-thruster",5), rw("burpee",5) ] },
+    { id:"cf-bear-bell", name:"Bear & Bell", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Moderate",
+      description:"Bear-position rows and squats with a bodyweight finish.",
+      movements:[ rw("db-bear-row",10), rw("goblet-squat",10), rw("pushup",10), rw("mountain-climber",20) ] },
+    { id:"cf-power-20", name:"Power 20", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Hard",
+      description:"Power cleans into push jerks, then a bodyweight burnout.",
+      movements:[ rw("db-power-clean",10), rw("db-push-jerk",10), rw("burpee",10), rw("air-squat",20) ] },
+    { id:"cf-dumbbell-chipper", name:"Dumbbell Chipper", type:"crossfit", format:"amrap", tags:["amrap","chipper"],
+      durationMin:20, equipment:"Dumbbells + mat", difficulty:"Hard",
+      description:"A five-movement chipper round — deadlift, clean, thruster, push-up, sit-up.",
+      movements:[ rw("db-deadlift",10), rw("db-hang-clean",10), rw("db-thruster",10), rw("pushup",10), rw("situp",10) ] },
+    { id:"cf-legs-of-steel", name:"Legs of Steel", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Hard",
+      description:"Front squats, RDLs, lunges and jump squats — legs only.",
+      movements:[ rw("front-rack-squat",10), rw("db-romanian-deadlift",10), rw("reverse-lunge",20), rw("squat-jump",10) ] },
+    { id:"cf-burpee-complex", name:"Burpee Complex", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Hard",
+      description:"Burpee clean & press opens each round into deadlifts and squats.",
+      movements:[ rw("db-burpee-clean-press",5), rw("db-deadlift",10), rw("goblet-squat",15), rw("mountain-climber",20) ] },
+    { id:"cf-upper-lower", name:"Upper + Lower", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells + mat", difficulty:"Moderate",
+      description:"Rows and presses on top, squats and a bodyweight finish on the bottom.",
+      movements:[ rw("db-bear-row",10), rw("goblet-squat",10), rw("db-push-press",10), rw("pushup",10), rw("situp",10) ] },
+    { id:"cf-unbroken", name:"Unbroken", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Hard",
+      description:"Four even movements of 8 — hang clean, front squat, push press, burpee.",
+      movements:[ rw("db-hang-clean",8), rw("front-rack-squat",8), rw("db-push-press",8), rw("burpee",8) ] },
+    { id:"cf-mat-metal", name:"Mat & Metal", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells + mat", difficulty:"Hard",
+      description:"Devil's press and V-ups paired with lunges and push-ups.",
+      movements:[ rw("db-devils-press",10), rw("vup",10), rw("db-alt-lunge",10), rw("pushup",10) ] },
+    { id:"cf-20min-ladder", name:"20-Minute Ladder", type:"crossfit", format:"ladder", tags:["ladder"],
+      durationMin:20, equipment:"Dumbbells", difficulty:"Hard",
+      description:"An ascending 2-4-6-8-10... ladder of thrusters and burpees for the full 20 minutes.",
+      ladderStep:2, movements:[ rw("db-thruster",2), rw("burpee",2) ] },
+    { id:"cf-final-boss", name:"Final Boss", type:"crossfit", format:"amrap", tags:["amrap"],
+      durationMin:20, equipment:"Dumbbells + mat", difficulty:"Hard",
+      description:"The biggest round in the library — five movements including a 20-rep sit-up finish.",
+      movements:[ rw("db-deadlift",10), rw("db-clean-press",10), rw("goblet-squat",10), rw("burpee",10), rw("situp",20) ] },
+
+    /* ===== Running (v25) — 30 built-in workouts. `format:"run_intervals"` gets the live
+       interval-by-interval player (legs[] — see leg()/legsUniform() above); `format:"run_continuous"`
+       is a single continuous effort (segments[] describes the pacing plan in plain text, logged
+       afterward like any other run — there's no GPS in this app, so a continuous effort can't be
+       auto-paced live, only planned and then logged; see the v25 doc section). */
+    { id:"run-short-sprints", name:"Short Sprints", type:"running", format:"run_intervals", tags:["short","speed"],
+      difficulty:"Hard", estimatedDistanceKm:"4-5", description:"Short, fast repeats with a full jog recovery.",
+      legs: legsUniform(10, "200 m fast", "200 m easy jog") },
+    { id:"run-speed-400s", name:"Speed 400s", type:"running", format:"run_intervals", tags:["short","speed","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"6-7", description:"8 x 400 m at 3K-5K pace.",
+      legs: legsUniform(8, "400 m @ 3K-5K pace", "90 sec recovery") },
+    { id:"run-200-400-mix", name:"200/400 Mix", type:"running", format:"run_intervals", tags:["short","speed","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"5-6", description:"4 x 200 m fast, then 4 x 400 m hard, jog recovery throughout.",
+      legs: legsUniform(4,"200 m fast","200 m jog").concat(legsUniform(4,"400 m hard","200 m jog")) },
+    { id:"run-pyramid", name:"Pyramid", type:"running", format:"run_intervals", tags:["speed","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"6-7", description:"200-400-600-800-600-400-200 m, building up and back down.",
+      legs:[ leg("200 m"), leg("400 m"), leg("600 m"), leg("800 m"), leg("600 m"), leg("400 m"), leg("200 m") ].map(function(l,i,arr){ return leg(l.work, i<arr.length-1?"jog recovery":null); }) },
+    { id:"run-5k-intervals", name:"5K Intervals", type:"running", format:"run_intervals", tags:["medium","speed","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"7-8", description:"5 x 1 km at 5K pace.",
+      legs: legsUniform(5,"1 km @ 5K pace","2 min jog") },
+    { id:"run-fast-finish", name:"Fast Finish", type:"running", format:"run_continuous", tags:["medium","tempo"],
+      difficulty:"Moderate", estimatedDistanceKm:"6", description:"An easy start building into a hard final kilometre.",
+      segments:["3 km easy","2 km progressive","1 km hard"] },
+    { id:"run-hill-power", name:"Hill Power", type:"running", format:"run_intervals", tags:["short","speed","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"4-5", description:"10 x 45 sec hard uphill, jog back down to recover.",
+      legs: legsUniform(10,"45 sec uphill hard","jog down recovery") },
+    { id:"run-lactate-burner", name:"Lactate Burner", type:"running", format:"run_intervals", tags:["speed","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"6-7", description:"3 x 800 m hard, then 4 x 200 m fast.",
+      legs: legsUniform(3,"800 m hard","3 min jog").concat(legsUniform(4,"200 m fast","200 m jog")) },
+    { id:"run-fartlek-20", name:"Fartlek 20", type:"running", format:"run_intervals", tags:["medium","intervals"],
+      difficulty:"Moderate", estimatedDistanceKm:"5-6", description:"10 x 1 min hard, 1 min easy.",
+      legs: legsUniform(10,"1 min hard","1 min easy") },
+    { id:"run-race-simulation", name:"Race Simulation", type:"running", format:"run_continuous", tags:["medium","race_specific"],
+      difficulty:"Hard", estimatedDistanceKm:"5", description:"Easy in, race pace through the middle, hard to finish.",
+      segments:["1 km easy","3 km @ 5K pace","1 km hard"] },
+    { id:"run-tempo-20", name:"Tempo 20", type:"running", format:"run_continuous", tags:["medium","tempo"],
+      difficulty:"Moderate", estimatedDistanceKm:"7-8", description:"A classic tempo session, easy in and out.",
+      segments:["10 min easy","20 min tempo","10 min easy"] },
+    { id:"run-threshold-4s", name:"Threshold 4s", type:"running", format:"run_intervals", tags:["medium","threshold","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"9-10", description:"4 x 2 km at threshold pace.",
+      legs: legsUniform(4,"2 km threshold","2 min jog") },
+    { id:"run-cruise-intervals", name:"Cruise Intervals", type:"running", format:"run_intervals", tags:["medium","threshold","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"8-9", description:"5 x 1.5 km at threshold pace.",
+      legs: legsUniform(5,"1.5 km threshold","90 sec jog") },
+    { id:"run-progressive-10k", name:"Progressive 10K", type:"running", format:"run_continuous", tags:["medium","tempo"],
+      difficulty:"Moderate", estimatedDistanceKm:"10", description:"Easy into moderate into hard over 10 km.",
+      segments:["3 km easy","4 km moderate","3 km hard"] },
+    { id:"run-800-engine", name:"800 Engine", type:"running", format:"run_intervals", tags:["medium","speed","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"7-8", description:"8 x 800 m at 10K-5K pace.",
+      legs: legsUniform(8,"800 m @ 10K-5K pace","90 sec recovery") },
+    { id:"run-fartlek-45", name:"Fartlek 45", type:"running", format:"run_intervals", tags:["medium","intervals"],
+      difficulty:"Moderate", estimatedDistanceKm:"8-9", description:"8 x 2 min hard, 2 min easy.",
+      legs: legsUniform(8,"2 min hard","2 min easy") },
+    { id:"run-hill-threshold", name:"Hill Threshold", type:"running", format:"run_intervals", tags:["medium","threshold","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"7-8", description:"6 x 3 min controlled-hard uphill, jog down to recover.",
+      legs: legsUniform(6,"3 min uphill controlled hard","jog down recovery") },
+    { id:"run-tempo-blocks", name:"Tempo Blocks", type:"running", format:"run_intervals", tags:["long","threshold","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"11-12", description:"3 x 10 min at threshold pace.",
+      legs: legsUniform(3,"10 min threshold","3 min easy") },
+    { id:"run-steady-fast", name:"Steady + Fast", type:"running", format:"run_continuous", tags:["long","threshold"],
+      difficulty:"Hard", estimatedDistanceKm:"12", description:"A long steady base with a threshold and hard finish.",
+      segments:["8 km steady","3 km threshold","1 km hard"] },
+    { id:"run-12k-progression", name:"12K Progression", type:"running", format:"run_continuous", tags:["long","threshold"],
+      difficulty:"Hard", estimatedDistanceKm:"12", description:"Four blocks, each a little harder than the last.",
+      segments:["4 km easy","4 km moderate","3 km threshold","1 km hard"] },
+    { id:"run-classic-long-run", name:"Classic Long Run", type:"running", format:"run_continuous", tags:["long"],
+      difficulty:"Moderate", estimatedDistanceKm:"18-25", description:"A straightforward easy-effort long run.",
+      segments:["18-25 km easy"] },
+    { id:"run-long-progression", name:"Long Progression", type:"running", format:"run_continuous", tags:["long"],
+      difficulty:"Hard", estimatedDistanceKm:"20", description:"Easy into steady into moderate/hard over 20 km.",
+      segments:["10 km easy","6 km steady","4 km moderate/hard"] },
+    { id:"run-marathon-blocks", name:"Marathon Blocks", type:"running", format:"run_intervals", tags:["long","race_specific","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"25", description:"3 x 5 km at marathon pace, with an easy kilometre between.",
+      legs: legsUniform(3,"5 km @ marathon pace","1 km easy jog") },
+    { id:"run-fast-finish-long-run", name:"Fast Finish Long Run", type:"running", format:"run_continuous", tags:["long"],
+      difficulty:"Hard", estimatedDistanceKm:"22", description:"An easy long run with a progressive final 5 km.",
+      segments:["22 km easy","final 5 km progressive"] },
+    { id:"run-long-fartlek", name:"Long Fartlek", type:"running", format:"run_intervals", tags:["long","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"20-25", description:"10 x 3 min hard, 3 min easy, over a long run.",
+      legs: legsUniform(10,"3 min hard","3 min easy") },
+    { id:"run-marathon-simulation", name:"Marathon Simulation", type:"running", format:"run_continuous", tags:["long","race_specific"],
+      difficulty:"Hard", estimatedDistanceKm:"25-30", description:"Easy warm-up into a long block at marathon pace, then cooldown.",
+      segments:["8 km easy","15-20 km @ marathon pace","cooldown"] },
+    { id:"run-hill-endurance", name:"Hill Endurance", type:"running", format:"run_continuous", tags:["long"],
+      difficulty:"Hard", estimatedDistanceKm:"20", description:"A long run with 8 x 4 min uphill efforts worked in along the way.",
+      segments:["20 km total, with 8 x 4 min uphill efforts during the run"] },
+    { id:"run-alternating-pace", name:"Alternating Pace", type:"running", format:"run_continuous", tags:["long"],
+      difficulty:"Hard", estimatedDistanceKm:"24", description:"Alternating 2 km easy with 2 km at marathon pace.",
+      segments:["24 km total, alternating 2 km easy / 2 km @ marathon pace"] },
+    { id:"run-back-end-strength", name:"Back-End Strength", type:"running", format:"run_continuous", tags:["long"],
+      difficulty:"Hard", estimatedDistanceKm:"25-30", description:"A long easy run finishing steady over the last stretch.",
+      segments:["25-30 km total","final 5-10 km steady"] },
+    { id:"run-race-specific-long-run", name:"Race-Specific Long Run", type:"running", format:"run_intervals", tags:["long","race_specific","intervals"],
+      difficulty:"Hard", estimatedDistanceKm:"28-32", description:"3 x 6 km at target race pace, with an easy kilometre between.",
+      legs: legsUniform(3,"6 km @ target race pace","1 km easy jog") }
   ];
+  // Backfill type/format on the pre-existing (v24) Stretching entries above, which predate these
+  // fields — keeps every routine object shape-complete without touching the 10 entries themselves.
+  WORKOUT_ROUTINES.forEach(function(r){
+    if(!r.type) r.type = "stretching";
+    if(!r.format) r.format = "stretch";
+    if(!r.tags) r.tags = r.focus ? [r.focus] : []; // e.g. "full-body" — the Stretching filter row's own "Favorites" chip is computed from state.workoutFavorites at render time, not stored as a tag
+    if(!r.difficulty) r.difficulty = "Easy";
+  });
+  function repsPerRound(r){ return (r.movements||[]).reduce(function(s,m){ return s + (m.reps||0); }, 0); }
   var WORKOUT_ROUTINE_FOCUS_LABELS = { "full-body":"Full body", "lower-body":"Lower body", "upper-body":"Upper body" };
   function routineById(id){ return WORKOUT_ROUTINES.filter(function(r){ return r.id===id; })[0] || null; }
-  function routineDurationMin(r){ return Math.round(r.movements.length * ROUTINE_MOVEMENT_SEC / 60); }
+  function routineDurationMin(r){
+    if(r.type==="stretching") return Math.round(r.movements.length * ROUTINE_MOVEMENT_SEC / 60);
+    if(typeof r.durationMin==="number") return r.durationMin; // CrossFit: fixed/capped duration
+    return null; // Running continuous efforts: only an estimated distance, not a fixed clock duration
+  }
   function isFavoriteRoutine(id){ return state.workoutFavorites.indexOf(id) !== -1; }
   function toggleFavoriteRoutine(id){
     var i = state.workoutFavorites.indexOf(id);
@@ -5447,14 +5782,169 @@
     save();
   }
   /* Library category shelf — deliberately only lists categories that actually have real,
-     built-in content behind them right now (Stretching), per "do not populate unfinished
-     categories with fake workouts." The architecture (this object + WORKOUT_ROUTINES' shape)
-     is ready for Running/CrossFit/etc. to be added the same way later without rework — they
-     just aren't invented here. */
+     built-in content behind them right now (Running, CrossFit, Stretching), per "only show
+     categories containing workouts." Strength has a full result model + manual logging + PBs
+     (see the v25 doc section) but no browsable templates, since the spec gave none to build —
+     so it's a Log-workout option, not a Library shelf tile. Cycling/Swimming are the same: a
+     manual-logging type with no templates yet. The architecture (this object + WORKOUT_ROUTINES'
+     shape) is ready for either to grow a real shelf the same way later, without rework. */
+  function routinesOfType(t){ return WORKOUT_ROUTINES.filter(function(r){ return r.type===t; }); }
   var WORKOUT_LIBRARY_CATEGORIES = [
-    { id:"stretching", label:"Stretching", subtitle:"Easy 10-minute routines for mobility and recovery.", icon:"leaf", color:"var(--teal)",
-      count: function(){ return WORKOUT_ROUTINES.length; }, unit:"routines" }
+    { id:"running", label:"Running", subtitle:"Speed, endurance and race-specific sessions.", icon:"running", color:"var(--ember)",
+      count: function(){ return routinesOfType("running").length; }, unit:"workouts" },
+    { id:"crossfit", label:"CrossFit", subtitle:"Short, challenging full-body sessions.", icon:"crossfit", color:"var(--plum)",
+      count: function(){ return routinesOfType("crossfit").length; }, unit:"workouts" },
+    { id:"stretching", label:"Stretching", subtitle:"Easy routines for mobility and recovery.", icon:"leaf", color:"var(--teal)",
+      count: function(){ return routinesOfType("stretching").length; }, unit:"routines" }
   ];
+  var WORKOUT_CATEGORY_LABELS = { running:"Running", crossfit:"CrossFit", strength:"Strength", stretching:"Stretching", cycling:"Cycling", swimming:"Swimming", other:"Other" };
+  var WORKOUT_CATEGORY_FILTERS = {
+    running: [["all","All"],["short","Short"],["medium","Medium"],["long","Long"],["speed","Speed"],["intervals","Intervals"],["tempo","Tempo"],["threshold","Threshold"],["long_run","Long run"],["race_specific","Race specific"]],
+    crossfit: [["all","All"],["amrap","AMRAP"],["for_time","For Time"],["ladder","Ladder"],["chipper","Chipper"],["intervals","Intervals"]],
+    stretching: [["all","All"],["full-body","Full body"],["lower-body","Lower body"],["upper-body","Upper body"],["favorites","Favorites"]]
+  };
+  // "Long run" is a content tag (a run that reads as a long run), not a separate length bucket
+  // from "Long" — every template tagged "long" already IS a long run, so the filter chip matches
+  // the same tag rather than needing every long template re-tagged twice.
+  function wkTemplateMatchesFilter(r, filterKey){
+    if(filterKey==="all") return true;
+    if(filterKey==="favorites") return isFavoriteRoutine(r.id);
+    if(filterKey==="long_run") return (r.tags||[]).indexOf("long")!==-1;
+    if(filterKey==="intervals" && r.type==="running") return r.format==="run_intervals";
+    if(filterKey==="intervals" && r.type==="crossfit") return (r.tags||[]).indexOf("intervals")!==-1; // none built-in yet — an honest empty filter, not a fabricated match
+    if(r.type==="stretching") return (r.tags||[]).indexOf(filterKey)!==-1;
+    return (r.tags||[]).indexOf(filterKey)!==-1 || r.format===filterKey;
+  }
+
+  /* ---- Result display strings — always generated from structured data, never stored (spec:
+     "the display string should be generated from structured data, do not store only the display
+     string"). One function per resultType, dispatched by wkDisplayResult(). ---- */
+  function fmtClock(totalSeconds){
+    totalSeconds = Math.max(0, Math.round(totalSeconds||0));
+    var m = Math.floor(totalSeconds/60), s = totalSeconds%60;
+    return m+":"+pad(s);
+  }
+  function fmtPaceMinPerKm(secPerKm){
+    if(!secPerKm || secPerKm<=0) return "";
+    return fmtClock(secPerKm)+"/km";
+  }
+  function wkAmrapTotalReps(w){
+    if(!w.amrap) return 0;
+    return w.amrap.rounds * (w.amrap.repsPerRound||0) + w.amrap.partialReps;
+  }
+  function wkLadderTotalReps(w){
+    if(!w.ladder) return 0;
+    return w.ladder.highestRound * (w.ladder.ladderStep||1) + w.ladder.partialReps;
+  }
+  function wkDisplayResult(w){
+    switch(w.resultType){
+      case "amrap":
+        if(!w.amrap) return "";
+        return w.amrap.rounds+" round"+(w.amrap.rounds===1?"":"s")+(w.amrap.partialReps>0 ? " + "+w.amrap.partialReps+" reps" : "");
+      case "for_time":
+        if(!w.forTime) return "";
+        if(!w.forTime.completedWithinCap && w.forTime.timeCapSeconds) return "CAP"+(w.forTime.remainingReps ? " + "+w.forTime.remainingReps+" reps left" : "");
+        return fmtClock(w.forTime.durationSeconds);
+      case "ladder":
+        if(!w.ladder) return "";
+        return w.ladder.highestRound+(w.ladder.partialReps>0 ? " + "+w.ladder.partialReps : "");
+      case "run":
+        if(!w.run) return "";
+        var pace = w.run.distanceKm ? (w.run.durationSeconds / w.run.distanceKm) : 0;
+        return (w.run.distanceKm ? w.run.distanceKm+" km · " : "") + fmtClock(w.run.durationSeconds) + (pace ? " · "+fmtPaceMinPerKm(pace) : "");
+      case "run_intervals":
+        if(!w.runIntervals || !w.runIntervals.length) return "";
+        var done = w.runIntervals.filter(function(iv){ return iv.completed; }).length;
+        return done+" / "+w.runIntervals.length+" intervals";
+      case "strength":
+        if(!w.strength || !w.strength.length) return "";
+        var first = w.strength[0], bestSet = first.sets.slice().sort(function(a,b){ return (b.weight||0)-(a.weight||0); })[0];
+        return first.name + (bestSet && bestSet.weight ? " — "+bestSet.weight+bestSet.unit+" x "+bestSet.reps : "") + (w.strength.length>1 ? " +"+(w.strength.length-1)+" more" : "");
+      case "stretching":
+        return "Completed";
+      default:
+        return w.duration ? w.duration+" min" : "Logged";
+    }
+  }
+  /* ---- Comparison + Personal Best engine — one function per resultType, since "different result
+     types compare differently" (spec §64). Never applies one generic rule to every workout, and
+     stretching is never compared (§31/§65 — recovery isn't a competition). Only `completed:true`
+     sessions are eligible, so a saved-incomplete session never wins/loses a PB. ---- */
+  function wkComparableSessions(templateId){
+    return state.workouts.filter(function(w){ return w.routineId===templateId && w.completed!==false; });
+  }
+  function wkBetterScore(resultType){
+    // returns a fn(session) -> number where HIGHER is always better, so every resultType can share one sort
+    switch(resultType){
+      case "amrap": return wkAmrapTotalReps;
+      case "for_time": return function(w){ return w.forTime && w.forTime.completedWithinCap!==false ? -w.forTime.durationSeconds : -Infinity; }; // lower time = better -> negate
+      case "ladder": return wkLadderTotalReps;
+      case "run": return function(w){ return w.run && w.run.durationSeconds ? -w.run.durationSeconds : -Infinity; }; // same-template runs are the same distance, so lower time wins
+      default: return null; // strength/stretching/manual are not ranked this way — see below
+    }
+  }
+  /* Personal best for a template: only awarded when results are genuinely comparable under that
+     template's own scoring rule (spec §65) — for AMRAP/ladder that's every completed attempt; for
+     For Time/Run, only attempts that actually finished (a CAP result or an unfinished run can't
+     beat a real time, and isn't penalized as a "loss" either — it's just not comparable). Optional
+     `sameLoadOnly` restricts to attempts at the same dumbbell load, per §39 ("do not treat 6+23 at
+     15kg as automatically equivalent to 6+23 at 25kg"). */
+  function wkTemplatePB(templateId, sameLoadOnly){
+    var r = routineById(templateId);
+    if(!r) return null;
+    var scoreFn = wkBetterScore(r.format==="amrap"?"amrap":r.format==="for_time"?"for_time":r.format==="ladder"?"ladder":r.type==="running"&&r.format!=="run_intervals"?"run":null);
+    if(!scoreFn) return null;
+    var sessions = wkComparableSessions(templateId).filter(function(w){ return scoreFn(w) > -Infinity; });
+    if(sameLoadOnly!=null) sessions = sessions.filter(function(w){ return w.loadValue===sameLoadOnly; });
+    if(!sessions.length) return null;
+    sessions.sort(function(a,b){ return scoreFn(b)-scoreFn(a); });
+    return sessions[0];
+  }
+  function wkIsPersonalBest(session){
+    if(!session.routineId || session.completed===false) return false;
+    var pb = wkTemplatePB(session.routineId);
+    return !!pb && pb.id===session.id;
+  }
+  /* App-wide running bests (spec §40): fastest at a handful of common race distances, computed
+     across every completed running session regardless of which template (or none) it came from,
+     matched within a small tolerance since a real run is never exactly 5.000km. Longest run is
+     just a max() — always comparable, no tolerance needed. */
+  var WK_RUN_PB_DISTANCES = [ {label:"Fastest 1 km", km:1, tolerance:0.05}, {label:"Fastest 5K", km:5, tolerance:0.15}, {label:"Fastest 10K", km:10, tolerance:0.25} ];
+  function wkRunningBests(){
+    var runs = state.workouts.filter(function(w){ return w.completed!==false && w.run && w.run.distanceKm && w.run.durationSeconds; });
+    var bests = WK_RUN_PB_DISTANCES.map(function(d){
+      var matches = runs.filter(function(w){ return Math.abs(w.run.distanceKm-d.km) <= d.tolerance; });
+      if(!matches.length) return null;
+      matches.sort(function(a,b){ return a.run.durationSeconds-b.run.durationSeconds; });
+      return { label:d.label, session:matches[0] };
+    }).filter(Boolean);
+    if(runs.length){
+      var longest = runs.slice().sort(function(a,b){ return b.run.distanceKm-a.run.distanceKm; })[0];
+      bests.push({ label:"Longest run", session:longest, isDistance:true });
+    }
+    return bests;
+  }
+  /* Strength bests (spec §40): heaviest weight + best single set, grouped by exercise name across
+     every strength session ever logged (there's no template to group by — strength has no
+     built-in library entries, only manual logging, so the exercise name itself is the key). */
+  function wkStrengthBests(){
+    var byExercise = {};
+    state.workouts.forEach(function(w){
+      if(w.completed===false || !w.strength) return;
+      w.strength.forEach(function(ex){
+        if(!ex.name) return;
+        var key = ex.name.trim().toLowerCase();
+        if(!byExercise[key]) byExercise[key] = { name:ex.name, heaviest:null, bestSet:null };
+        ex.sets.forEach(function(s){
+          if(!s.completed || !s.weight) return;
+          if(!byExercise[key].heaviest || s.weight>byExercise[key].heaviest.weight) byExercise[key].heaviest = { weight:s.weight, unit:s.unit, reps:s.reps, date:w.date };
+          var vol = s.weight*s.reps;
+          if(!byExercise[key].bestSet || vol>(byExercise[key].bestSet.weight*byExercise[key].bestSet.reps)) byExercise[key].bestSet = { weight:s.weight, unit:s.unit, reps:s.reps, date:w.date };
+        });
+      });
+    });
+    return Object.keys(byExercise).map(function(k){ return byExercise[k]; }).filter(function(e){ return e.heaviest; });
+  }
 
   /* ============ WORKOUTS view ============ */
   function wkCategoryIconSvg(key){
@@ -5559,72 +6049,146 @@
   }
 
   /* ---- Library: routine list for one category, with focus/favorites filters ---- */
-  var WK_FILTERS = [["all","All"],["full-body","Full body"],["lower-body","Lower body"],["upper-body","Upper body"],["favorites","Favorites"]];
   function workoutCategoryHTML(catId){
     var cat = WORKOUT_LIBRARY_CATEGORIES.filter(function(c){ return c.id===catId; })[0];
     if(!cat) return workoutLibraryCategoriesHTML();
-    var routines = WORKOUT_ROUTINES.slice();
-    if(wkLibFilter==="favorites") routines = routines.filter(function(r){ return isFavoriteRoutine(r.id); });
-    else if(wkLibFilter!=="all") routines = routines.filter(function(r){ return r.focus===wkLibFilter; });
-    var filterHTML = '<div class="wk-filter-row">'+WK_FILTERS.map(function(f){
+    var filterDefs = WORKOUT_CATEGORY_FILTERS[catId] || [["all","All"]];
+    var routines = routinesOfType(catId).filter(function(r){ return wkTemplateMatchesFilter(r, wkLibFilter); });
+    var filterHTML = '<div class="wk-filter-row">'+filterDefs.map(function(f){
       return '<button type="button" class="wk-filter-btn'+(wkLibFilter===f[0]?" active":"")+'" data-wk-filter="'+f[0]+'">'+f[1]+'</button>';
     }).join("")+'</div>';
-    var rowsHTML = !routines.length ? '<p class="empty">No routines match this filter yet.</p>' :
+    var rowsHTML = !routines.length ? '<p class="empty">No workouts match this filter yet.</p>' :
       '<div class="rows">'+routines.map(workoutRoutineRowHTML).join("")+'</div>';
     return '<button type="button" class="cal-back-btn" data-wk-back-categories style="margin-bottom:12px">&larr; Library</button>'+
       '<div class="panel"><div class="panel-head"><h2>'+esc(cat.label)+'</h2><span class="hint">'+esc(cat.subtitle)+'</span></div>'+
       filterHTML + rowsHTML + '</div>';
   }
+  function wkRoutineIconSvg(r){
+    if(r.type==="running") return SHOE_SVG;
+    if(r.type==="crossfit") return DUMBBELL_SVG;
+    return LEAF_SVG;
+  }
+  function wkRoutineSummaryLine(r){
+    if(r.type==="stretching") return WORKOUT_ROUTINE_FOCUS_LABELS[r.focus]+' · '+routineDurationMin(r)+' min · '+r.movements.length+' movements';
+    if(r.type==="crossfit"){
+      var fmtLabel = r.format==="amrap" ? "AMRAP" : r.format==="for_time" ? "For Time" : r.format==="ladder" ? "Ladder" : capitalize(r.format);
+      return fmtLabel+' · '+r.durationMin+' min'+(r.repScheme?' · '+r.repScheme:'');
+    }
+    if(r.type==="running"){
+      var lenTag = (r.tags||[]).filter(function(t){ return ["short","medium","long"].indexOf(t)!==-1; })[0];
+      return (lenTag?capitalize(lenTag)+' · ':'')+(r.format==="run_intervals"?"Intervals":"Continuous")+(r.estimatedDistanceKm?' · ~'+r.estimatedDistanceKm+' km':'');
+    }
+    return "";
+  }
   function workoutRoutineRowHTML(r){
     var fav = isFavoriteRoutine(r.id);
     return '<div class="wk-routine-row" data-wk-open-routine="'+r.id+'">'+
-      '<span class="wk-routine-icon">'+LEAF_SVG+'</span>'+
+      '<span class="wk-routine-icon">'+wkRoutineIconSvg(r)+'</span>'+
       '<div class="wk-routine-main"><div class="wk-routine-name">'+esc(r.name)+'</div>'+
-        '<div class="wk-routine-meta">'+WORKOUT_ROUTINE_FOCUS_LABELS[r.focus]+' · '+routineDurationMin(r)+' min · '+r.movements.length+' movements</div></div>'+
+        '<div class="wk-routine-meta">'+wkRoutineSummaryLine(r)+'</div>'+
+        (r.description ? '<div class="wk-routine-desc">'+esc(r.description)+'</div>' : '')+'</div>'+
       '<button type="button" class="wk-fav-btn'+(fav?" active":"")+'" data-wk-toggle-fav="'+r.id+'" title="'+(fav?"Remove favorite":"Add favorite")+'">'+HEART_SVG+'</button>'+
     '</div>';
   }
 
-  /* ---- Library: routine detail page ---- */
+  /* ---- Library: template detail page — one generic function across every type, dispatching on
+     r.type only where the content genuinely differs (movement list vs. round list vs. interval/
+     segment plan). Previous Result + Personal Best panels (spec §15-16) only render when real,
+     comparable history exists — never a fabricated "no PB yet" placeholder pretending to compare. ---- */
   function workoutRoutineDetailHTML(routineId){
     var r = routineById(routineId);
     if(!r) return workoutLibraryCategoriesHTML();
     var fav = isFavoriteRoutine(r.id);
     var durMin = routineDurationMin(r);
-    var crumb = '<button type="button" class="cal-back-btn" data-wk-back-category style="margin-bottom:12px">&larr; Stretching</button>';
+    var catLabel = WORKOUT_CATEGORY_LABELS[r.type] || capitalize(r.type);
+    var crumb = '<button type="button" class="cal-back-btn" data-wk-back-category style="margin-bottom:12px">&larr; '+esc(catLabel)+'</button>';
     var tiles = '<div class="wk-info-tiles">'+
-      '<div class="stat-tile" style="--accent:var(--teal)"><div class="label">Duration</div><div class="value">'+durMin+'m</div></div>'+
-      '<div class="stat-tile" style="--accent:var(--teal)"><div class="label">Movements</div><div class="value">'+r.movements.length+'</div></div>'+
-      '<div class="stat-tile" style="--accent:var(--teal)"><div class="label">Difficulty</div><div class="value" style="font-size:1rem">Easy</div></div>'+
-      '<div class="stat-tile" style="--accent:var(--teal)"><div class="label">Equipment</div><div class="value" style="font-size:1rem">None</div></div>'+
+      '<div class="stat-tile" style="--accent:var(--teal)"><div class="label">Duration</div><div class="value">'+(durMin!=null?durMin+'m':'~'+(r.estimatedDistanceKm||'')+'km')+'</div></div>'+
+      '<div class="stat-tile" style="--accent:var(--teal)"><div class="label">'+(r.type==="stretching"?"Movements":r.type==="crossfit"?"Format":"Type")+'</div><div class="value" style="font-size:1rem">'+
+        (r.type==="stretching"?r.movements.length:r.type==="crossfit"?(r.format==="amrap"?"AMRAP":r.format==="for_time"?"For Time":"Ladder"):(r.format==="run_intervals"?"Intervals":"Continuous"))+'</div></div>'+
+      '<div class="stat-tile" style="--accent:var(--teal)"><div class="label">Difficulty</div><div class="value" style="font-size:1rem">'+esc(r.difficulty||"Easy")+'</div></div>'+
+      '<div class="stat-tile" style="--accent:var(--teal)"><div class="label">Equipment</div><div class="value" style="font-size:1rem">'+esc(r.equipment||"None")+'</div></div>'+
     '</div>';
     var actions = '<div class="wk-action-row">'+
-      '<button type="button" class="btn btn-primary" style="background:var(--teal)" data-wk-start-routine="'+r.id+'">'+PLAY_SVG+' Start routine</button>'+
+      '<button type="button" class="btn btn-primary" style="background:var(--teal)" data-wk-start-routine="'+r.id+'">'+PLAY_SVG+' Start workout</button>'+
       '<button type="button" class="btn" data-wk-toggle-fav="'+r.id+'" style="'+(fav?'background:var(--ember);color:#fff;border-color:var(--ember)':'')+'">'+HEART_SVG+' '+(fav?"Favorited":"Favorite")+'</button>'+
       '<button type="button" class="btn" data-wk-open-schedule="'+r.id+'">'+CALENDAR_SVG+' Schedule</button>'+
     '</div>';
-    var movesHTML = r.movements.map(function(ref, idx){
-      var m = movementById(ref.movementId);
-      var open = wkExpandedMovementIdx===idx;
-      return '<div class="wk-move-row'+(open?" open":"")+'" data-wk-move-toggle="'+idx+'">'+
-        '<div class="wk-move-top">'+
-          '<span class="wk-move-num">'+(idx+1)+'</span>'+
-          '<span class="wk-move-name">'+esc(m.name)+(ref.side?' ('+capitalize(ref.side)+')':'')+'</span>'+
-          '<span class="wk-move-dur">'+ref.durationSeconds+'s</span>'+
-          '<span class="wk-move-chevron">'+CHEVRON_DOWN_SVG+'</span>'+
-        '</div>'+
-        (open ? '<div class="wk-move-how">'+esc(m.instructions)+'</div>' : '')+
-      '</div>';
-    }).join("");
+
+    var bodyHTML;
+    if(r.type==="stretching"){
+      bodyHTML = r.movements.map(function(ref, idx){
+        var m = movementById(ref.movementId);
+        var open = wkExpandedMovementIdx===idx;
+        return '<div class="wk-move-row'+(open?" open":"")+'" data-wk-move-toggle="'+idx+'">'+
+          '<div class="wk-move-top">'+
+            '<span class="wk-move-num">'+(idx+1)+'</span>'+
+            '<span class="wk-move-name">'+esc(m.name)+(ref.side?' ('+capitalize(ref.side)+')':'')+'</span>'+
+            '<span class="wk-move-dur">'+ref.durationSeconds+'s</span>'+
+            '<span class="wk-move-chevron">'+CHEVRON_DOWN_SVG+'</span>'+
+          '</div>'+
+          (open ? '<div class="wk-move-how">'+esc(m.instructions)+'</div>' : '')+
+        '</div>';
+      }).join("");
+    } else if(r.type==="crossfit"){
+      bodyHTML = '<div class="rows">'+r.movements.map(function(ref, idx){
+        var m = movementById(ref.movementId);
+        var open = wkExpandedMovementIdx===idx;
+        return '<div class="wk-move-row'+(open?" open":"")+'" data-wk-move-toggle="'+idx+'">'+
+          '<div class="wk-move-top">'+
+            '<span class="wk-move-num">'+ref.reps+'</span>'+
+            '<span class="wk-move-name">'+esc(m.name)+'</span>'+
+            '<span class="wk-move-chevron">'+CHEVRON_DOWN_SVG+'</span>'+
+          '</div>'+
+          (open ? '<div class="wk-move-how">'+esc(m.instructions)+'</div>' : '')+
+        '</div>';
+      }).join("")+'</div>'+
+      (r.ladderStep ? '<p class="empty" style="text-align:left;padding:10px 2px">Ascending ladder: add '+r.ladderStep+' reps to each movement every round.</p>' : '');
+    } else if(r.type==="running"){
+      if(r.format==="run_intervals"){
+        bodyHTML = '<div class="rows">'+r.legs.map(function(l, idx){
+          return '<div class="wk-move-row">'+
+            '<div class="wk-move-top">'+
+              '<span class="wk-move-num">'+(idx+1)+'</span>'+
+              '<span class="wk-move-name">'+esc(l.work)+'</span>'+
+              (l.recover ? '<span class="wk-move-dur">'+esc(l.recover)+'</span>' : '')+
+            '</div>'+
+          '</div>';
+        }).join("")+'</div>';
+      } else {
+        bodyHTML = '<div class="rows">'+(r.segments||[]).map(function(seg, idx){
+          return '<div class="wk-move-row"><div class="wk-move-top"><span class="wk-move-num">'+(idx+1)+'</span><span class="wk-move-name">'+esc(seg)+'</span></div></div>';
+        }).join("")+'</div>'+
+        '<p class="empty" style="text-align:left;padding:10px 2px">No GPS tracking here — run this by feel/watch, then log the real distance, time and pace when you finish.</p>';
+      }
+    }
+
+    var prevSessions = wkComparableSessions(r.id);
+    var mostRecent = prevSessions.length ? prevSessions.slice().sort(function(a,b){ return byDateDesc(a,b); })[0] : null;
+    var pb = wkTemplatePB(r.id);
+    var prevPanel = mostRecent ? '<div class="panel" style="border-color:var(--teal)">'+
+      '<div class="panel-head"><h2 style="font-size:.9rem">Previous result</h2><span class="hint">'+fmtShort(mostRecent.date)+'</span></div>'+
+      '<div class="wk-complete-stat-num" style="font-size:1.3rem">'+esc(wkDisplayResult(mostRecent))+'</div>'+
+      (mostRecent.loadValue ? '<p style="font-size:.8rem;color:var(--ink-soft);margin-top:4px">'+mostRecent.loadValue+mostRecent.loadUnit+(mostRecent.loadConfig?' · '+esc(mostRecent.loadConfig):'')+'</p>' : '')+
+      (mostRecent.effort ? '<p style="font-size:.8rem;color:var(--ink-soft)">Effort '+mostRecent.effort+'/10</p>' : '')+
+      '<button type="button" class="btn-ghost" data-wk-view-history="'+r.id+'" style="margin-top:6px">View history</button>'+
+    '</div>' : '';
+    var pbPanel = (pb && r.type!=="stretching") ? '<div class="panel" style="border-color:var(--ember)">'+
+      '<div class="panel-head"><h2 style="font-size:.9rem">Personal best</h2><span class="hint">'+fmtShort(pb.date)+'</span></div>'+
+      '<div class="wk-complete-stat-num" style="font-size:1.3rem">'+esc(wkDisplayResult(pb))+'</div>'+
+      (pb.loadValue ? '<p style="font-size:.8rem;color:var(--ink-soft);margin-top:4px">'+pb.loadValue+pb.loadUnit+'</p>' : '')+
+    '</div>' : '';
+
     return crumb+
+      (prevPanel||pbPanel ? '<div class="grid-2" style="margin-bottom:16px">'+prevPanel+pbPanel+'</div>' : '')+
       '<div class="panel">'+
         '<div class="wk-detail-head">'+
-          '<span class="wk-detail-icon">'+LEAF_SVG+'</span>'+
+          '<span class="wk-detail-icon">'+wkRoutineIconSvg(r)+'</span>'+
           '<div class="wk-detail-info"><h2>'+esc(r.name)+'</h2><p class="wk-detail-sub">'+esc(r.description)+'</p></div>'+
         '</div>'+
         tiles + actions +
-        '<div class="panel-head" style="margin-top:4px"><h2 style="font-size:.9rem">Movements</h2></div>'+
-        movesHTML+
+        '<div class="panel-head" style="margin-top:4px"><h2 style="font-size:.9rem">'+(r.type==="stretching"?"Movements":r.type==="crossfit"?"Round":"Plan")+'</h2></div>'+
+        bodyHTML+
       '</div>'+
       (wkShowSchedule ? workoutScheduleModalHTML(r.id) : '');
   }
@@ -5700,31 +6264,183 @@
     '</div></div>';
   }
 
-  /* ---- Completion screen ---- */
-  var WK_FEEL_OPTIONS = [["much_better","Much better"],["better","Better"],["same","About the same"]];
+  /* ---- v25 players: HTML ---- */
+  function wkRoundMovesListHTML(r){
+    return '<div class="rows" style="text-align:left;max-width:340px;margin:10px auto">'+r.movements.map(function(m){
+      var mv = movementById(m.movementId);
+      return '<div class="wk-move-row"><div class="wk-move-top"><span class="wk-move-num">'+m.reps+'</span><span class="wk-move-name">'+esc(mv.name)+'</span></div></div>';
+    }).join("")+'</div>';
+  }
+  function wkAmrapPlayerHTML(){
+    var r = routineById(wkAmrapPlayer.routineId);
+    if(!r){ wkAmrapPlayer=null; wkStopGenericTicking(); return workoutLibraryCategoriesHTML(); }
+    var remaining = Math.max(0, wkAmrapRemainingSec(wkAmrapPlayer, r));
+    return '<div class="panel"><div class="wk-player">'+
+      '<button type="button" class="cal-back-btn" data-wk-abandon-player style="margin-bottom:8px">&larr; Abandon</button>'+
+      '<div class="wk-player-progress">'+esc(r.name.toUpperCase())+'</div>'+
+      '<div class="wk-timer-num" style="font-size:2.6rem;margin:6px 0">'+fmtClock(remaining)+'</div>'+
+      '<div class="wk-move-title">Round '+(wkAmrapPlayer.rounds+1)+'</div>'+
+      wkRoundMovesListHTML(r)+
+      '<div class="wk-player-controls">'+
+        '<button type="button" class="wk-player-btn primary" data-wk-toggle-pause="amrap" title="'+(wkAmrapPlayer.pausedAt?"Resume":"Pause")+'">'+(wkAmrapPlayer.pausedAt?PLAY_SVG:PAUSE_SVG)+'</button>'+
+      '</div>'+
+      '<button type="button" class="btn btn-primary" style="background:var(--teal);width:100%;max-width:320px;margin:10px auto;display:block" data-wk-amrap-round>+ Complete round</button>'+
+      '<button type="button" class="btn" style="max-width:320px;margin:0 auto 10px;display:block" data-wk-amrap-partial>+ Partial reps</button>'+
+      '<button type="button" class="wk-player-finish" data-wk-amrap-partial>Finish workout</button>'+
+    '</div></div>';
+  }
+  function wkAmrapPartialFormHTML(){
+    var r = routineById(wkAmrapPlayer.routineId);
+    var rowsHTML = r.movements.map(function(m,idx){
+      var mv = movementById(m.movementId);
+      return '<label class="f">'+esc(mv.name)+' <span class="hint">(of '+m.reps+')</span><input type="number" min="0" max="'+m.reps+'" value="'+m.reps+'" id="wk-partial-'+idx+'"></label>';
+    }).join("");
+    return '<div class="panel"><h2 style="font-size:1.05rem">Time! How far into round '+(wkAmrapPlayer.rounds+1)+' did you get?</h2>'+
+      '<p style="font-size:.82rem;color:var(--ink-soft);margin-bottom:10px">Leave a movement at its full number if you completed it — lower the ones you didn’t finish.</p>'+
+      '<form class="stack" id="wk-amrap-partial-form">'+rowsHTML+
+      '<button class="btn btn-primary" style="background:var(--teal)" type="submit">Save result</button></form></div>';
+  }
+  function wkForTimePlayerHTML(){
+    var r = routineById(wkForTimePlayer.routineId);
+    if(!r){ wkForTimePlayer=null; wkStopGenericTicking(); return workoutLibraryCategoriesHTML(); }
+    var elapsedSec = Math.floor(wkElapsedMs(wkForTimePlayer)/1000);
+    return '<div class="panel"><div class="wk-player">'+
+      '<button type="button" class="cal-back-btn" data-wk-abandon-player style="margin-bottom:8px">&larr; Abandon</button>'+
+      '<div class="wk-player-progress">'+esc(r.name.toUpperCase())+(r.durationMin?' · cap '+r.durationMin+'m':'')+'</div>'+
+      '<div class="wk-timer-num" style="font-size:2.6rem;margin:6px 0">'+fmtClock(elapsedSec)+'</div>'+
+      (r.repScheme ? '<div class="wk-move-title">Scheme: '+esc(r.repScheme)+'</div>' : '')+
+      wkRoundMovesListHTML(r)+
+      '<div class="wk-player-controls">'+
+        '<button type="button" class="wk-player-btn primary" data-wk-toggle-pause="fortime" title="'+(wkForTimePlayer.pausedAt?"Resume":"Pause")+'">'+(wkForTimePlayer.pausedAt?PLAY_SVG:PAUSE_SVG)+'</button>'+
+      '</div>'+
+      '<button type="button" class="wk-player-finish" data-wk-fortime-finish>Finish workout</button>'+
+    '</div></div>';
+  }
+  function wkForTimeResultFormHTML(){
+    return '<div class="panel"><h2 style="font-size:1.05rem">Time cap reached</h2>'+
+      '<p style="font-size:.82rem;color:var(--ink-soft);margin-bottom:10px">How many reps were left when the clock ran out?</p>'+
+      '<form class="stack" id="wk-fortime-cap-form">'+
+        '<label class="f">Reps remaining<input type="number" min="0" id="wk-fortime-remaining" value="0"></label>'+
+        '<button class="btn btn-primary" style="background:var(--teal)" type="submit">Save result</button>'+
+      '</form></div>';
+  }
+  function wkLadderPlayerHTML(){
+    var r = routineById(wkLadderPlayer.routineId);
+    if(!r){ wkLadderPlayer=null; wkStopGenericTicking(); return workoutLibraryCategoriesHTML(); }
+    var elapsedSec = Math.floor(wkElapsedMs(wkLadderPlayer)/1000);
+    return '<div class="panel"><div class="wk-player">'+
+      '<button type="button" class="cal-back-btn" data-wk-abandon-player style="margin-bottom:8px">&larr; Abandon</button>'+
+      '<div class="wk-player-progress">'+esc(r.name.toUpperCase())+(r.durationMin?' · cap '+r.durationMin+'m':'')+'</div>'+
+      '<div class="wk-timer-num" style="font-size:2.6rem;margin:6px 0">'+fmtClock(elapsedSec)+'</div>'+
+      '<div class="wk-move-title">Ascending ladder — add '+r.ladderStep+' reps to each movement, every round</div>'+
+      wkRoundMovesListHTML(r)+
+      '<div class="wk-player-controls">'+
+        '<button type="button" class="wk-player-btn primary" data-wk-toggle-pause="ladder" title="'+(wkLadderPlayer.pausedAt?"Resume":"Pause")+'">'+(wkLadderPlayer.pausedAt?PLAY_SVG:PAUSE_SVG)+'</button>'+
+      '</div>'+
+      '<button type="button" class="wk-player-finish" data-wk-ladder-finish>Finish workout</button>'+
+    '</div></div>';
+  }
+  function wkLadderResultFormHTML(){
+    return '<div class="panel"><h2 style="font-size:1.05rem">Where did you finish?</h2>'+
+      '<form class="stack" id="wk-ladder-result-form">'+
+        '<label class="f">Highest round completed in full<input type="number" min="0" id="wk-ladder-highest" value="0"></label>'+
+        '<label class="f">Reps into the next round<input type="number" min="0" id="wk-ladder-partial" value="0"></label>'+
+        '<button class="btn btn-primary" style="background:var(--teal)" type="submit">Save result</button>'+
+      '</form></div>';
+  }
+  function wkRunIntervalPlayerHTML(){
+    var p = wkRunIntervalPlayer;
+    var r = routineById(p.routineId);
+    if(!r){ wkRunIntervalPlayer=null; wkStopGenericTicking(); return workoutLibraryCategoriesHTML(); }
+    var leg = r.legs[p.legIndex];
+    if(p.phase==="recover"){
+      var remaining = p.recoverTargetSec!=null ? Math.max(0, p.recoverTargetSec - Math.floor((Date.now()-p.recoverStartedAt)/1000)) : null;
+      return '<div class="panel"><div class="wk-player">'+
+        '<button type="button" class="cal-back-btn" data-wk-abandon-player style="margin-bottom:8px">&larr; Abandon</button>'+
+        '<div class="wk-player-progress">Recovery — interval '+(p.legIndex+1)+' of '+r.legs.length+' done</div>'+
+        (remaining!=null ? '<div class="wk-timer-num" style="font-size:2.6rem;margin:6px 0">'+fmtClock(remaining)+'</div>' : '<div class="wk-move-title">'+esc(leg.recover||"Recover")+' — tap Next when ready</div>')+
+        '<div class="wk-move-title">Next: '+esc((r.legs[p.legIndex+1]||{}).work||"")+'</div>'+
+        '<button type="button" class="btn btn-primary" style="background:var(--ember)" data-wk-run-next>Next interval</button>'+
+      '</div></div>';
+    }
+    var elapsedSec = Math.floor((Date.now()-p.startedAt)/1000);
+    return '<div class="panel"><div class="wk-player">'+
+      '<button type="button" class="cal-back-btn" data-wk-abandon-player style="margin-bottom:8px">&larr; Abandon</button>'+
+      '<div class="wk-player-progress">'+esc(r.name)+' · Interval '+(p.legIndex+1)+' of '+r.legs.length+'</div>'+
+      '<div class="wk-timer-num" style="font-size:2.6rem;margin:6px 0">'+fmtClock(elapsedSec)+'</div>'+
+      '<div class="wk-move-title">'+esc(leg.work)+'</div>'+
+      (leg.recover ? '<p style="font-size:.82rem;color:var(--ink-soft)">Recovery after: '+esc(leg.recover)+'</p>' : '')+
+      '<button type="button" class="btn btn-primary" style="background:var(--ember);width:100%;max-width:320px;margin:14px auto;display:block" data-wk-run-complete-interval>Complete interval</button>'+
+    '</div></div>';
+  }
+  function wkRunContinuousPlayerHTML(){
+    var p = wkRunContinuousPlayer;
+    var r = p.routineId ? routineById(p.routineId) : null;
+    var elapsedSec = Math.floor(wkElapsedMs(p)/1000);
+    return '<div class="panel"><div class="wk-player">'+
+      '<button type="button" class="cal-back-btn" data-wk-abandon-player style="margin-bottom:8px">&larr; Abandon</button>'+
+      '<div class="wk-player-progress">'+(r?esc(r.name.toUpperCase()):"RUN")+'</div>'+
+      '<div class="wk-timer-num" style="font-size:2.6rem;margin:6px 0">'+fmtClock(elapsedSec)+'</div>'+
+      (r && r.segments ? '<div class="rows" style="text-align:left;max-width:340px;margin:10px auto">'+r.segments.map(function(s){ return '<div class="wk-move-row"><div class="wk-move-top"><span class="wk-move-name">'+esc(s)+'</span></div></div>'; }).join("")+'</div>' : '<p style="font-size:.82rem;color:var(--ink-soft)">No GPS here — run by feel or your watch, then log the real numbers when you finish.</p>')+
+      '<div class="wk-player-controls">'+
+        '<button type="button" class="wk-player-btn primary" data-wk-toggle-pause="runcontinuous" title="'+(p.pausedAt?"Resume":"Pause")+'">'+(p.pausedAt?PLAY_SVG:PAUSE_SVG)+'</button>'+
+      '</div>'+
+      '<button type="button" class="wk-player-finish" data-wk-run-finish>Finish workout</button>'+
+    '</div></div>';
+  }
+  function wkRunResultFormHTML(){
+    var p = wkRunContinuousPlayer;
+    var elapsedMin = Math.round(wkElapsedMs(p)/60000);
+    return '<div class="panel"><h2 style="font-size:1.05rem">How far, and how long?</h2>'+
+      '<form class="stack" id="wk-run-result-form">'+
+        '<div class="field-row">'+
+          '<label class="f">Distance (km)<input type="number" step="0.01" min="0" id="wk-run-distance" placeholder="8.2"></label>'+
+          '<label class="f">Duration (min)<input type="number" min="0" id="wk-run-duration" value="'+elapsedMin+'"></label>'+
+        '</div>'+
+        '<p class="hint" id="wk-run-pace-preview">&nbsp;</p>'+
+        '<button class="btn btn-primary" style="background:var(--ember)" type="submit">Save result</button>'+
+      '</form></div>';
+  }
+
+  /* ---- Completion screen — one generic screen across every result type (spec §21). Extra fields
+     (effort, dumbbell load) only render when the type actually uses them, and challenge-linking
+     only lists challenges whose goal key matches this session's own type — never a silent/automatic
+     link (spec §49: "only contribute metrics that match the Challenge goal"). ---- */
+  var WK_FEEL_OPTIONS_RECOVERY = [["much_better","Much better"],["better","Better"],["same","About the same"]];
+  var WK_FEEL_OPTIONS_TRAINING = [["great","Great"],["good","Good"],["okay","Okay"],["hard","Hard"],["very_hard","Very hard"]];
+  var WK_CHALLENGE_GOAL_KEY_BY_TYPE = { stretching:"mobility", running:"running", crossfit:"crossfit", strength:"strength", cycling:"cycling", swimming:"swimming", other:"training" };
   function workoutCompleteHTML(){
     var c = wkCompletion;
+    var wk = state.workouts.filter(function(w){ return w.id===c.savedWorkoutId; })[0];
+    var goalKey = WK_CHALLENGE_GOAL_KEY_BY_TYPE[wk?wk.type:""] || "training";
     var eligibleChallenges = [];
     state.challenges.list.forEach(function(ch){
       if(ch.status!=="active") return;
-      (ch.goals||[]).forEach(function(g){ if(g.key==="mobility") eligibleChallenges.push({ challenge:ch, goal:g }); });
+      (ch.goals||[]).forEach(function(g){ if(g.key===goalKey) eligibleChallenges.push({ challenge:ch, goal:g }); });
     });
+    var feelOptions = c.resultType==="stretching" ? WK_FEEL_OPTIONS_RECOVERY : WK_FEEL_OPTIONS_TRAINING;
+    var showLoad = c.resultType==="amrap" || c.resultType==="for_time" || c.resultType==="ladder";
     return '<div class="panel"><div class="wk-complete">'+
       '<div class="wk-complete-icon">'+CHECK_SVG+'</div>'+
-      '<div class="wk-complete-title">Routine complete</div>'+
-      '<div class="wk-complete-sub">'+esc(c.routine.name)+' · '+fmtShort(c.completedAt)+' at '+fmtTimePretty(c.completedTime)+'</div>'+
+      '<div class="wk-complete-title">'+(c.resultType==="stretching"?"Routine complete":"Workout complete")+(c.isPB?' · <span style="color:var(--ember)">New personal best</span>':'')+'</div>'+
+      '<div class="wk-complete-sub">'+esc(c.routine?c.routine.name:"Run")+' · '+fmtShort(c.completedAt)+' at '+fmtTimePretty(c.completedTime)+'</div>'+
       '<div class="wk-complete-stats">'+
         '<div><div class="wk-complete-stat-num">'+c.durationMin+'</div><div class="wk-complete-stat-label">Minutes</div></div>'+
-        '<div><div class="wk-complete-stat-num">'+c.routine.movements.length+'</div><div class="wk-complete-stat-label">Movements</div></div>'+
+        (c.resultLine ? '<div><div class="wk-complete-stat-num" style="font-size:1.3rem">'+esc(c.resultLine)+'</div><div class="wk-complete-stat-label">Result</div></div>' : '')+
       '</div>'+
+      (showLoad ? '<div class="field-row" style="max-width:360px;margin:0 auto 14px">'+
+        '<label class="f">Load ('+((wk&&wk.loadUnit)||"kg")+')<input type="number" step="0.5" min="0" id="wk-complete-load" value="'+esc((c.loadValue!=null?c.loadValue:((wk&&wk.loadValue)||"")))+'"></label>'+
+        '<label class="f">Config<input type="text" id="wk-complete-loadconfig" placeholder="Pair" value="'+esc((c.loadConfig!=null?c.loadConfig:((wk&&wk.loadConfig)||"")))+'"></label>'+
+      '</div>' : '')+
       '<p style="font-size:.82rem;color:var(--ink-soft);margin-bottom:6px">How do you feel? <span style="color:var(--ink-faint)">(optional)</span></p>'+
-      '<div class="wk-feel-row">'+WK_FEEL_OPTIONS.map(function(f){
+      '<div class="wk-feel-row">'+feelOptions.map(function(f){
         return '<button type="button" class="wk-feel-btn'+(c.feeling===f[0]?" active":"")+'" data-wk-feel="'+f[0]+'">'+f[1]+'</button>';
       }).join("")+'</div>'+
+      '<div style="max-width:200px;margin:0 auto 14px"><label class="f">Effort <span class="hint">(1-10, optional)</span><input type="number" min="1" max="10" id="wk-complete-effort" value="'+(c.effort||"")+'"></label></div>'+
       (eligibleChallenges.length ? '<div style="max-width:360px;margin:0 auto 14px;text-align:left">'+
         '<label class="f">Link to a challenge (optional)<select id="wk-complete-challenge" data-picker="select">'+
           '<option value="">Don’t link</option>'+
-          eligibleChallenges.map(function(e){ return '<option value="'+e.challenge.id+'"'+(c.linkedChallengeId===e.challenge.id?" selected":"")+'>'+esc(e.challenge.name)+' — '+esc(e.goal.title||"Mobility goal")+'</option>'; }).join("")+
+          eligibleChallenges.map(function(e){ return '<option value="'+e.challenge.id+'"'+(c.linkedChallengeId===e.challenge.id?" selected":"")+'>'+esc(e.challenge.name)+' — '+esc(e.goal.title||"Goal")+'</option>'; }).join("")+
         '</select></label></div>' : '')+
       (wkShowCompletionNote ? '<div style="max-width:360px;margin:0 auto 14px;text-align:left"><label class="f">Note<textarea id="wk-complete-note" rows="2" placeholder="optional">'+esc(c.note||"")+'</textarea></label></div>' : '')+
       '<div class="wk-complete-actions">'+
@@ -5779,6 +6495,11 @@
   function renderWorkouts(){
     if(workoutsPage==="library"){
       if(wkLibPage==="player" && wkPlayer) return workoutPlayerHTML();
+      if(wkLibPage==="amrap" && wkAmrapPlayer) return wkAmrapPartialForm ? wkAmrapPartialFormHTML() : wkAmrapPlayerHTML();
+      if(wkLibPage==="fortime" && wkForTimePlayer) return wkForTimeResultForm ? wkForTimeResultFormHTML() : wkForTimePlayerHTML();
+      if(wkLibPage==="ladder" && wkLadderPlayer) return wkLadderResultForm ? wkLadderResultFormHTML() : wkLadderPlayerHTML();
+      if(wkLibPage==="runintervals" && wkRunIntervalPlayer) return wkRunIntervalPlayerHTML();
+      if(wkLibPage==="runcontinuous" && wkRunContinuousPlayer) return wkRunResultForm ? wkRunResultFormHTML() : wkRunContinuousPlayerHTML();
       if(wkLibPage==="complete" && wkCompletion) return workoutCompleteHTML();
       if(wkLibPage==="routine" && wkActiveRoutineId && routineById(wkActiveRoutineId)) return workoutRoutineDetailHTML(wkActiveRoutineId);
       if(wkLibPage==="category" && wkLibCategoryId) return workoutsHeadHTML()+workoutsSubtabsHTML()+workoutCategoryHTML(wkLibCategoryId);
@@ -5851,7 +6572,21 @@
     var b = state.timeBlocks.filter(function(x){ return x.id===blockId; })[0];
     if(!b || !b.linkedId) return;
     if(b.completed){ goToTab("workouts"); workoutsPage = "history"; renderViews(); return; }
-    startWorkoutPlayer(b.linkedId, b.id);
+    startWorkoutFromRoutine(b.linkedId, b.id);
+  }
+  /* Single entry point for "Start workout" — both the template detail page's button and a tapped
+     scheduled Calendar/Today block call this. Dispatches to the right player by template format,
+     since "different training formats need different player interfaces" (spec §17) rather than
+     forcing everything into one generic screen. */
+  function startWorkoutFromRoutine(routineId, sourceBlockId){
+    var r = routineById(routineId);
+    if(!r) return;
+    if(r.type==="stretching") return startWorkoutPlayer(routineId, sourceBlockId);
+    if(r.format==="amrap") return startAmrapPlayer(routineId, sourceBlockId);
+    if(r.format==="for_time") return startForTimePlayer(routineId, sourceBlockId);
+    if(r.format==="ladder") return startLadderPlayer(routineId, sourceBlockId);
+    if(r.format==="run_intervals") return startRunIntervalPlayer(routineId, sourceBlockId);
+    if(r.format==="run_continuous") return startRunContinuousPlayer(routineId, sourceBlockId);
   }
   function startWorkoutPlayer(routineId, sourceBlockId){
     var r = routineById(routineId);
@@ -5875,9 +6610,10 @@
     var durationMin = r ? routineDurationMin(r) : 0;
     var completedAt = todayISO();
     wkCompletion = {
-      routine: r, durationMin: durationMin, completedAt: completedAt,
+      routine: r, resultType: "stretching", durationMin: durationMin, completedAt: completedAt,
       completedTime: pad(now.getHours())+":"+pad(now.getMinutes()),
-      feeling: "", note: "", linkedChallengeId: "", savedWorkoutId: null, sourceBlockId: sourceBlockId
+      feeling: "", effort: null, note: "", linkedChallengeId: "", savedWorkoutId: null, sourceBlockId: sourceBlockId,
+      resultLine: "", isPB: false
     };
     if(r){
       var wk = normalizeWorkout({ id:uid(), type:"stretching", date:completedAt, duration:durationMin, routineId:r.id, routineName:r.name });
@@ -5893,6 +6629,213 @@
     wkShowCompletionNote = false;
     save();
     renderViews();
+  }
+
+  /* ---- v25 players engine: AMRAP / For Time / Ladder / Running intervals / Running continuous.
+     Every player derives its clock from a real startedAt timestamp (+ paused-time bookkeeping),
+     never from decrementing a counter each tick — a missed tick or a re-render never drifts the
+     displayed time (spec §67). wkGenericTicker is one shared interval re-rendering once a second
+     while any of these five is active; only one is ever non-null at once. ---- */
+  function wkStopGenericTicking(){ if(wkGenericTicker){ clearInterval(wkGenericTicker); wkGenericTicker=null; } }
+  function wkStartGenericTicking(){
+    wkStopGenericTicking();
+    wkGenericTicker = setInterval(function(){
+      if(wkAmrapPlayer && !wkAmrapPlayer.pausedAt && !wkAmrapPartialForm){
+        var r = routineById(wkAmrapPlayer.routineId);
+        if(r && wkAmrapRemainingSec(wkAmrapPlayer,r)<=0){ wkAmrapOpenPartialForm(); return; }
+        renderViews();
+      } else if(wkForTimePlayer && !wkForTimePlayer.pausedAt && !wkForTimeResultForm){
+        var rf = routineById(wkForTimePlayer.routineId);
+        if(rf && rf.durationMin && wkElapsedMs(wkForTimePlayer)/1000 >= rf.durationMin*60){ wkForTimeOpenCapForm(); return; }
+        renderViews();
+      } else if(wkLadderPlayer && !wkLadderPlayer.pausedAt && !wkLadderResultForm){
+        var rl = routineById(wkLadderPlayer.routineId);
+        if(rl && rl.durationMin && wkElapsedMs(wkLadderPlayer)/1000 >= rl.durationMin*60){ wkLadderResultForm = true; renderViews(); return; }
+        renderViews();
+      } else if(wkRunIntervalPlayer){
+        if(wkRunIntervalPlayer.phase==="recover" && wkRunIntervalPlayer.recoverTargetSec!=null){
+          var elapsed = Math.floor((Date.now()-wkRunIntervalPlayer.recoverStartedAt)/1000);
+          if(elapsed >= wkRunIntervalPlayer.recoverTargetSec){ wkRunAdvanceAfterRecovery(); return; }
+        }
+        renderViews();
+      } else if(wkRunContinuousPlayer && !wkRunContinuousPlayer.pausedAt && !wkRunResultForm){
+        renderViews();
+      }
+    }, 1000);
+  }
+  /* Abandon (discard, no save) — the only exit these five players have, since none of them show the
+     Workouts subtab bar while active (matching the pre-existing stretching player's own screen). A
+     confirm avoids an accidental tap losing a real session (spec's "prevent accidental loss"); this
+     discards outright rather than offering a Save-incomplete path — a smaller, honest v1 of that
+     requirement rather than a half-built partial-save flow. */
+  function wkAbandonPlayer(){
+    if(!window.confirm("Abandon this workout? Nothing will be saved.")) return;
+    wkStopGenericTicking();
+    wkAmrapPlayer=null; wkForTimePlayer=null; wkLadderPlayer=null; wkRunIntervalPlayer=null; wkRunContinuousPlayer=null;
+    wkAmrapPartialForm=false; wkForTimeResultForm=null; wkLadderResultForm=false; wkRunResultForm=false;
+    wkLibPage="categories"; wkActiveRoutineId=null;
+    renderViews();
+  }
+  function wkElapsedMs(p){ return (p.pausedAt || Date.now()) - p.startedAt - (p.totalPausedMs||0); }
+  function wkToggleGenericPause(p){
+    if(p.pausedAt){ p.totalPausedMs = (p.totalPausedMs||0) + (Date.now()-p.pausedAt); p.pausedAt = null; }
+    else { p.pausedAt = Date.now(); }
+    renderViews();
+  }
+  function wkParseSecondsLabel(text){
+    if(!text) return null;
+    var mMin = text.match(/(\d+)\s*min/i); var mSec = text.match(/(\d+)\s*sec/i);
+    if(mMin) return Number(mMin[1])*60; if(mSec) return Number(mSec[1]); return null;
+  }
+  /* Shared "save the WorkoutSession + set up the completion screen" step, used by every format —
+     matches the Stretching player's own established pattern (save immediately, then the completion
+     screen edits feeling/notes/challenge-link onto the already-saved record via Done). */
+  function wkBuildAndSaveCompletion(opts){
+    var now = new Date(), completedAt = todayISO();
+    var payload = Object.assign({
+      id: uid(), type: opts.routine ? opts.routine.type : (opts.type||"other"),
+      resultType: opts.resultType, date: completedAt, duration: Math.round(opts.durationMin||0),
+      routineId: opts.routine ? opts.routine.id : null, routineName: opts.routine ? opts.routine.name : "",
+      source: "waypoint_timer"
+    }, opts.extra||{});
+    var wk = normalizeWorkout(payload);
+    state.workouts.push(wk);
+    wkCompletion = {
+      routine: opts.routine, resultType: opts.resultType, durationMin: Math.round(opts.durationMin||0),
+      completedAt: completedAt, completedTime: pad(now.getHours())+":"+pad(now.getMinutes()),
+      feeling:"", effort:null, note:"", linkedChallengeId:"", savedWorkoutId: wk.id, sourceBlockId: opts.sourceBlockId||null,
+      resultLine: wkDisplayResult(wk), isPB: false
+    };
+    if(opts.sourceBlockId){
+      var b = state.timeBlocks.filter(function(x){ return x.id===opts.sourceBlockId; })[0];
+      if(b){ b.completed = true; b.resultWorkoutId = wk.id; }
+    }
+    save(); // must persist before checking PB — wkTemplatePB reads state.workouts
+    wkCompletion.isPB = wkIsPersonalBest(wk);
+    wkAmrapPlayer=null; wkForTimePlayer=null; wkLadderPlayer=null; wkRunIntervalPlayer=null; wkRunContinuousPlayer=null;
+    wkAmrapPartialForm=false; wkForTimeResultForm=null; wkLadderResultForm=false; wkRunResultForm=false;
+    wkStopGenericTicking();
+    wkLibPage = "complete"; wkShowCompletionNote = false;
+    renderViews();
+  }
+
+  /* ---- AMRAP ---- */
+  function wkAmrapRemainingSec(p, r){ return (r.durationMin*60) - Math.floor(wkElapsedMs(p)/1000); }
+  function startAmrapPlayer(routineId, sourceBlockId){
+    var r = routineById(routineId); if(!r) return;
+    wkAmrapPlayer = { routineId:routineId, sourceBlockId:sourceBlockId||null, startedAt:Date.now(), pausedAt:null, totalPausedMs:0, rounds:0, roundTimestamps:[] };
+    wkAmrapPartialForm = false;
+    workoutsPage="library"; wkLibPage="amrap"; activeTab="workouts"; renderTabs();
+    wkStartGenericTicking(); renderViews();
+  }
+  function wkAmrapCompleteRound(){ if(!wkAmrapPlayer) return; wkAmrapPlayer.rounds++; wkAmrapPlayer.roundTimestamps.push(Date.now()); renderViews(); }
+  function wkAmrapOpenPartialForm(){ wkAmrapPartialForm = true; renderViews(); }
+  function wkAmrapFinish(partialReps, loadValue, loadUnit, loadConfig){
+    var r = routineById(wkAmrapPlayer.routineId);
+    var sourceBlockId = wkAmrapPlayer.sourceBlockId;
+    wkBuildAndSaveCompletion({
+      routine:r, sourceBlockId:sourceBlockId, resultType:"amrap", durationMin:r.durationMin,
+      extra:{ loadValue:loadValue, loadUnit:loadUnit, loadConfig:loadConfig,
+        amrap:{ rounds:wkAmrapPlayer.rounds, partialReps:partialReps, repsPerRound:repsPerRound(r), timeCapSeconds:r.durationMin*60 } }
+    });
+  }
+  /* ---- For Time ---- */
+  function startForTimePlayer(routineId, sourceBlockId){
+    var r = routineById(routineId); if(!r) return;
+    wkForTimePlayer = { routineId:routineId, sourceBlockId:sourceBlockId||null, startedAt:Date.now(), pausedAt:null, totalPausedMs:0 };
+    wkForTimeResultForm = null;
+    workoutsPage="library"; wkLibPage="fortime"; activeTab="workouts"; renderTabs();
+    wkStartGenericTicking(); renderViews();
+  }
+  function wkForTimeOpenCapForm(){ wkForTimeResultForm = { autoCapped:true }; renderViews(); }
+  function wkForTimeFinishManual(loadValue, loadUnit, loadConfig){
+    var r = routineById(wkForTimePlayer.routineId);
+    var elapsedSec = Math.floor(wkElapsedMs(wkForTimePlayer)/1000);
+    wkBuildAndSaveCompletion({
+      routine:r, sourceBlockId:wkForTimePlayer.sourceBlockId, resultType:"for_time", durationMin:elapsedSec/60,
+      extra:{ loadValue:loadValue, loadUnit:loadUnit, loadConfig:loadConfig,
+        forTime:{ durationSeconds:elapsedSec, timeCapSeconds:r.durationMin?r.durationMin*60:null, completedWithinCap:true, remainingReps:null } }
+    });
+  }
+  function wkForTimeFinishCapped(remainingReps, loadValue, loadUnit, loadConfig){
+    var r = routineById(wkForTimePlayer.routineId);
+    var capSec = r.durationMin*60;
+    wkBuildAndSaveCompletion({
+      routine:r, sourceBlockId:wkForTimePlayer.sourceBlockId, resultType:"for_time", durationMin:capSec/60,
+      extra:{ loadValue:loadValue, loadUnit:loadUnit, loadConfig:loadConfig,
+        forTime:{ durationSeconds:capSec, timeCapSeconds:capSec, completedWithinCap:false, remainingReps:remainingReps } }
+    });
+  }
+  /* ---- Ladder ---- */
+  function startLadderPlayer(routineId, sourceBlockId){
+    var r = routineById(routineId); if(!r) return;
+    wkLadderPlayer = { routineId:routineId, sourceBlockId:sourceBlockId||null, startedAt:Date.now(), pausedAt:null, totalPausedMs:0 };
+    wkLadderResultForm = false;
+    workoutsPage="library"; wkLibPage="ladder"; activeTab="workouts"; renderTabs();
+    wkStartGenericTicking(); renderViews();
+  }
+  function wkLadderFinish(highestRound, partialReps, loadValue, loadUnit, loadConfig){
+    var r = routineById(wkLadderPlayer.routineId);
+    var elapsedSec = Math.floor(wkElapsedMs(wkLadderPlayer)/1000);
+    wkBuildAndSaveCompletion({
+      routine:r, sourceBlockId:wkLadderPlayer.sourceBlockId, resultType:"ladder", durationMin:elapsedSec/60,
+      extra:{ loadValue:loadValue, loadUnit:loadUnit, loadConfig:loadConfig,
+        ladder:{ highestRound:highestRound, partialReps:partialReps, ladderStep:r.ladderStep||1 } }
+    });
+  }
+  /* ---- Running intervals ---- */
+  function startRunIntervalPlayer(routineId, sourceBlockId){
+    var r = routineById(routineId); if(!r || !r.legs || !r.legs.length) return;
+    wkRunIntervalPlayer = { routineId:routineId, sourceBlockId:sourceBlockId||null, legIndex:0, phase:"work", startedAt:Date.now(), recoverStartedAt:null, recoverTargetSec:null, results:[] };
+    workoutsPage="library"; wkLibPage="runintervals"; activeTab="workouts"; renderTabs();
+    wkStartGenericTicking(); renderViews();
+  }
+  function wkRunCompleteInterval(){
+    if(!wkRunIntervalPlayer || wkRunIntervalPlayer.phase!=="work") return;
+    var r = routineById(wkRunIntervalPlayer.routineId);
+    var leg = r.legs[wkRunIntervalPlayer.legIndex];
+    var durationSeconds = Math.floor((Date.now()-wkRunIntervalPlayer.startedAt)/1000);
+    wkRunIntervalPlayer.results.push({ legIndex:wkRunIntervalPlayer.legIndex, label:leg.work, durationSeconds:durationSeconds, completed:true });
+    if(wkRunIntervalPlayer.legIndex >= r.legs.length-1){ wkRunIntervalsFinish(); return; }
+    var recoverSec = wkParseSecondsLabel(leg.recover);
+    wkRunIntervalPlayer.phase = "recover";
+    wkRunIntervalPlayer.recoverStartedAt = Date.now();
+    wkRunIntervalPlayer.recoverTargetSec = recoverSec; // null = manual "tap Next when ready", no fabricated countdown
+    renderViews();
+  }
+  function wkRunAdvanceAfterRecovery(){
+    if(!wkRunIntervalPlayer) return;
+    wkRunIntervalPlayer.legIndex++;
+    wkRunIntervalPlayer.phase = "work";
+    wkRunIntervalPlayer.startedAt = Date.now();
+    wkRunIntervalPlayer.recoverStartedAt = null; wkRunIntervalPlayer.recoverTargetSec = null;
+    renderViews();
+  }
+  function wkRunIntervalsFinish(){
+    var r = routineById(wkRunIntervalPlayer.routineId);
+    var results = wkRunIntervalPlayer.results;
+    var totalSec = results.reduce(function(s,iv){ return s+(iv.durationSeconds||0); },0);
+    wkBuildAndSaveCompletion({
+      routine:r, sourceBlockId:wkRunIntervalPlayer.sourceBlockId, resultType:"run_intervals", durationMin:totalSec/60,
+      extra:{ runIntervals: results }
+    });
+  }
+  /* ---- Running continuous (tempo/long runs — no GPS in this app, so this is a stopwatch you run
+     alongside, not a live pacer; the real distance/pace is entered once you finish) ---- */
+  function startRunContinuousPlayer(routineId, sourceBlockId){
+    wkRunContinuousPlayer = { routineId:routineId||null, sourceBlockId:sourceBlockId||null, startedAt:Date.now(), pausedAt:null, totalPausedMs:0 };
+    wkRunResultForm = false;
+    workoutsPage="library"; wkLibPage="runcontinuous"; activeTab="workouts"; renderTabs();
+    wkStartGenericTicking(); renderViews();
+  }
+  function wkRunContinuousOpenResultForm(){ wkRunResultForm = true; renderViews(); }
+  function wkRunContinuousFinish(distanceKm, durationSeconds){
+    var r = wkRunContinuousPlayer.routineId ? routineById(wkRunContinuousPlayer.routineId) : null;
+    wkBuildAndSaveCompletion({
+      routine:r, sourceBlockId:wkRunContinuousPlayer.sourceBlockId, resultType:"run", durationMin:durationSeconds/60,
+      type: r ? undefined : "running",
+      extra:{ run:{ distanceKm:distanceKm, durationSeconds:durationSeconds } }
+    });
   }
 
   /* ============ READING view (books) ============ */
@@ -11032,7 +11975,14 @@
       });
 
       Array.prototype.forEach.call(document.querySelectorAll("[data-wk-start-routine]"), function(btn){
-        btn.addEventListener("click", function(){ startWorkoutPlayer(btn.getAttribute("data-wk-start-routine"), null); });
+        btn.addEventListener("click", function(){ startWorkoutFromRoutine(btn.getAttribute("data-wk-start-routine"), null); });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-view-history]"), function(btn){
+        btn.addEventListener("click", function(){
+          wkHistoryTemplateId = btn.getAttribute("data-wk-view-history");
+          workoutsPage = "history"; wkLibPage = "categories";
+          renderViews();
+        });
       });
 
       /* ---- Schedule a routine (creates a linked Calendar/Today time block — not a separate
@@ -11056,9 +12006,11 @@
         var start = document.getElementById("wk-sched-time").value || "08:00";
         var repeat = document.getElementById("wk-sched-repeat").value;
         var reminder = document.getElementById("wk-sched-reminder").checked;
+        var schedDurMin = routineDurationMin(r);
+        if(schedDurMin==null) schedDurMin = 60; // continuous running efforts have no fixed clock duration — reasonable default, not fabricated precision
         state.timeBlocks.push({
           id: uid(), title:r.name, date:date, category:"training", startTime:start, endTime:"",
-          duration: routineDurationMin(r), notes:"", completed:false,
+          duration: schedDurMin, notes:"", completed:false,
           linkedType:"workoutTemplate", linkedId:r.id, resultWorkoutId:null,
           repeatRule:repeat, reminder:reminder,
           createdAt: todayISO(), updatedAt: todayISO()
@@ -11077,30 +12029,133 @@
         if(r && wkPlayer.index+1 < r.movements.length) wkGoToMovement(wkPlayer.index+1);
         else wkFinishRoutine();
       });
-      var wkPauseBtn = document.querySelector("[data-wk-toggle-pause]");
+      var wkPauseBtn = document.querySelector('[data-wk-toggle-pause=""]');
       if(wkPauseBtn) wkPauseBtn.addEventListener("click", function(){ if(wkPlayer){ wkPlayer.paused = !wkPlayer.paused; renderViews(); } });
       var wkFinishBtn = document.querySelector("[data-wk-finish-early]");
       if(wkFinishBtn) wkFinishBtn.addEventListener("click", function(){ wkFinishRoutine(); });
       var wkSkipTransitionBtn = document.querySelector("[data-wk-skip-transition]");
       if(wkSkipTransitionBtn) wkSkipTransitionBtn.addEventListener("click", function(){ wkAdvanceMovement(); });
 
+      /* ---- v25 players: AMRAP / For Time / Ladder / Running-intervals / Running-continuous controls.
+         Each player type gets its own value-qualified [data-wk-toggle-pause="<type>"] selector rather
+         than the bare stretching-player selector above — only one player page is ever on screen at a
+         time, but a bare attribute selector would still silently grab the wrong player's button. ---- */
+      var wkAbandonBtn = document.querySelector("[data-wk-abandon-player]");
+      if(wkAbandonBtn) wkAbandonBtn.addEventListener("click", function(){ wkAbandonPlayer(); });
+
+      var wkAmrapPauseBtn = document.querySelector('[data-wk-toggle-pause="amrap"]');
+      if(wkAmrapPauseBtn) wkAmrapPauseBtn.addEventListener("click", function(){ if(wkAmrapPlayer) wkToggleGenericPause(wkAmrapPlayer); });
+      var wkAmrapRoundBtn = document.querySelector("[data-wk-amrap-round]");
+      if(wkAmrapRoundBtn) wkAmrapRoundBtn.addEventListener("click", function(){ wkAmrapCompleteRound(); });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-amrap-partial]"), function(btn){
+        btn.addEventListener("click", function(){ wkAmrapOpenPartialForm(); });
+      });
+      var wkAmrapPartialFormEl = document.getElementById("wk-amrap-partial-form");
+      if(wkAmrapPartialFormEl) wkAmrapPartialFormEl.addEventListener("submit", function(ev){
+        ev.preventDefault();
+        if(!wkAmrapPlayer) return;
+        var r = routineById(wkAmrapPlayer.routineId);
+        if(!r) return;
+        var total = 0;
+        r.movements.forEach(function(m, idx){
+          var el = document.getElementById("wk-partial-"+idx);
+          var v = el ? Number(el.value) : 0;
+          if(isNaN(v)) v = 0;
+          total += Math.max(0, Math.min(m.reps, v));
+        });
+        wkAmrapFinish(total, null, "kg", "");
+      });
+
+      var wkFortimePauseBtn = document.querySelector('[data-wk-toggle-pause="fortime"]');
+      if(wkFortimePauseBtn) wkFortimePauseBtn.addEventListener("click", function(){ if(wkForTimePlayer) wkToggleGenericPause(wkForTimePlayer); });
+      var wkFortimeFinishBtn = document.querySelector("[data-wk-fortime-finish]");
+      if(wkFortimeFinishBtn) wkFortimeFinishBtn.addEventListener("click", function(){ wkForTimeFinishManual(null,"kg",""); });
+      var wkFortimeCapForm = document.getElementById("wk-fortime-cap-form");
+      if(wkFortimeCapForm) wkFortimeCapForm.addEventListener("submit", function(ev){
+        ev.preventDefault();
+        var el = document.getElementById("wk-fortime-remaining");
+        var remaining = el ? Number(el.value) : 0;
+        if(isNaN(remaining) || remaining<0) remaining = 0;
+        wkForTimeFinishCapped(remaining, null, "kg", "");
+      });
+
+      var wkLadderPauseBtn = document.querySelector('[data-wk-toggle-pause="ladder"]');
+      if(wkLadderPauseBtn) wkLadderPauseBtn.addEventListener("click", function(){ if(wkLadderPlayer) wkToggleGenericPause(wkLadderPlayer); });
+      var wkLadderFinishBtn = document.querySelector("[data-wk-ladder-finish]");
+      if(wkLadderFinishBtn) wkLadderFinishBtn.addEventListener("click", function(){ wkLadderResultForm = true; renderViews(); });
+      var wkLadderResultFormEl = document.getElementById("wk-ladder-result-form");
+      if(wkLadderResultFormEl) wkLadderResultFormEl.addEventListener("submit", function(ev){
+        ev.preventDefault();
+        var hEl = document.getElementById("wk-ladder-highest"), pEl = document.getElementById("wk-ladder-partial");
+        var highest = hEl ? Number(hEl.value) : 0, partial = pEl ? Number(pEl.value) : 0;
+        if(isNaN(highest) || highest<0) highest = 0;
+        if(isNaN(partial) || partial<0) partial = 0;
+        wkLadderFinish(highest, partial, null, "kg", "");
+      });
+
+      var wkRunCompleteIntervalBtn = document.querySelector("[data-wk-run-complete-interval]");
+      if(wkRunCompleteIntervalBtn) wkRunCompleteIntervalBtn.addEventListener("click", function(){ wkRunCompleteInterval(); });
+      var wkRunNextBtn = document.querySelector("[data-wk-run-next]");
+      if(wkRunNextBtn) wkRunNextBtn.addEventListener("click", function(){ wkRunAdvanceAfterRecovery(); });
+
+      var wkRuncontPauseBtn = document.querySelector('[data-wk-toggle-pause="runcontinuous"]');
+      if(wkRuncontPauseBtn) wkRuncontPauseBtn.addEventListener("click", function(){ if(wkRunContinuousPlayer) wkToggleGenericPause(wkRunContinuousPlayer); });
+      var wkRunFinishBtn = document.querySelector("[data-wk-run-finish]");
+      if(wkRunFinishBtn) wkRunFinishBtn.addEventListener("click", function(){ wkRunContinuousOpenResultForm(); });
+      var wkRunResultFormEl = document.getElementById("wk-run-result-form");
+      function wkUpdateRunPacePreview(){
+        var distEl = document.getElementById("wk-run-distance"), durEl = document.getElementById("wk-run-duration");
+        var out = document.getElementById("wk-run-pace-preview");
+        if(!distEl || !durEl || !out) return;
+        var dist = Number(distEl.value), durMin = Number(durEl.value);
+        out.textContent = (dist>0 && durMin>0) ? "Pace: "+fmtPaceMinPerKm((durMin*60)/dist) : " ";
+      }
+      if(wkRunResultFormEl){
+        ["wk-run-distance","wk-run-duration"].forEach(function(id){
+          var el = document.getElementById(id);
+          if(el) el.addEventListener("input", wkUpdateRunPacePreview);
+        });
+        wkUpdateRunPacePreview();
+        wkRunResultFormEl.addEventListener("submit", function(ev){
+          ev.preventDefault();
+          var distEl = document.getElementById("wk-run-distance"), durEl = document.getElementById("wk-run-duration");
+          var distanceKm = (distEl && distEl.value!=="") ? Number(distEl.value) : null;
+          var durationMin = durEl ? Number(durEl.value) : 0;
+          if(isNaN(durationMin) || durationMin<0) durationMin = 0;
+          wkRunContinuousFinish(distanceKm, Math.round(durationMin*60));
+        });
+      }
+
       /* ---- Completion screen ---- */
+      /* Load/Config/Effort are new v25 fields that can be typed before a Feel button (or Add note) is
+         clicked — every click below re-renders, so each one captures every unsaved sibling field first,
+         matching this codebase's established pattern for avoiding the "erasure bug" (an unsaved input
+         silently wiped by an unrelated control's re-render). */
+      function wkCaptureCompletionDraft(){
+        if(!wkCompletion) return;
+        var noteEl = document.getElementById("wk-complete-note");
+        if(noteEl) wkCompletion.note = noteEl.value;
+        var chalSel = document.getElementById("wk-complete-challenge");
+        if(chalSel) wkCompletion.linkedChallengeId = chalSel.value;
+        var loadEl = document.getElementById("wk-complete-load");
+        if(loadEl) wkCompletion.loadValue = loadEl.value;
+        var loadConfigEl = document.getElementById("wk-complete-loadconfig");
+        if(loadConfigEl) wkCompletion.loadConfig = loadConfigEl.value;
+        var effortEl = document.getElementById("wk-complete-effort");
+        if(effortEl) wkCompletion.effort = effortEl.value;
+      }
       Array.prototype.forEach.call(document.querySelectorAll("[data-wk-feel]"), function(btn){
         btn.addEventListener("click", function(){
           if(!wkCompletion) return;
+          wkCaptureCompletionDraft();
           wkCompletion.feeling = btn.getAttribute("data-wk-feel");
-          var noteEl = document.getElementById("wk-complete-note");
-          if(noteEl) wkCompletion.note = noteEl.value;
-          var chalSel = document.getElementById("wk-complete-challenge");
-          if(chalSel) wkCompletion.linkedChallengeId = chalSel.value;
           renderViews();
         });
       });
       var wkAddNoteBtn = document.querySelector("[data-wk-add-note]");
       if(wkAddNoteBtn) wkAddNoteBtn.addEventListener("click", function(){
         if(!wkCompletion) return;
-        var chalSel = document.getElementById("wk-complete-challenge");
-        if(chalSel) wkCompletion.linkedChallengeId = chalSel.value;
+        wkCaptureCompletionDraft();
         wkShowCompletionNote = true;
         renderViews();
       });
@@ -11112,13 +12167,25 @@
             wk.feeling = wkCompletion.feeling || "";
             var noteEl = document.getElementById("wk-complete-note");
             if(noteEl) wk.notes = noteEl.value.trim();
+            var loadEl = document.getElementById("wk-complete-load");
+            if(loadEl && loadEl.value!=="" && !isNaN(Number(loadEl.value))) wk.loadValue = Number(loadEl.value);
+            var loadConfigEl = document.getElementById("wk-complete-loadconfig");
+            if(loadConfigEl) wk.loadConfig = loadConfigEl.value.trim();
+            var effortEl = document.getElementById("wk-complete-effort");
+            if(effortEl && effortEl.value!=="" && !isNaN(Number(effortEl.value))) wk.effort = Math.max(1, Math.min(10, Number(effortEl.value)));
             var chalSel = document.getElementById("wk-complete-challenge");
             /* Challenge linking is opt-in only — a challenge activity record is created ONLY when the
-               user explicitly picked one here, never automatically just because a matching goal exists. */
+               user explicitly picked one here, never automatically just because a matching goal exists.
+               type uses this session's own mapped goal key (WK_CHALLENGE_GOAL_KEY_BY_TYPE), not a
+               hardcoded "mobility" — a CrossFit or Running session must link to a CrossFit/Running goal,
+               never silently show up against a Mobility one. */
             if(chalSel && chalSel.value){
+              var goalKey = WK_CHALLENGE_GOAL_KEY_BY_TYPE[wk.type] || "training";
+              var routineLabel = wkCompletion.routine ? wkCompletion.routine.name : (WORKOUT_CATEGORY_LABELS[wk.type] || "Workout");
               state.challenges.activities.push(normalizeChallengeActivity({
-                challengeId: chalSel.value, type:"mobility", date: wkCompletion.completedAt,
-                durationMinutes: wkCompletion.durationMin, notes:"Stretching: "+wkCompletion.routine.name
+                challengeId: chalSel.value, type:goalKey, date: wkCompletion.completedAt,
+                durationMinutes: wkCompletion.durationMin,
+                notes: (wk.type==="stretching"?"Stretching: ":"")+routineLabel
               }));
             }
           }
