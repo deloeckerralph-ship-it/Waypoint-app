@@ -1487,6 +1487,111 @@
   .trv-photo-del{ position:absolute; top:4px; right:4px; width:22px; height:22px; border-radius:50%; border:none; background:rgba(10,9,6,.6); color:#fff; font-size:.9rem; line-height:1; cursor:pointer; }
 
   .note-textarea{ width:100%; font-family:inherit; font-size:.88rem; padding:10px 12px; border:1px solid var(--border); border-radius:10px; background:var(--surface); color:var(--ink); resize:vertical; }
+
+  /* ============ WORKOUT LIBRARY ============ */
+  .wk-cat-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:14px; }
+  .wk-cat-card{
+    text-align:left; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+    padding:16px; cursor:pointer; display:flex; flex-direction:column; gap:10px;
+  }
+  .wk-cat-card:hover{ border-color:var(--ink-faint); }
+  .wk-cat-card-icon{
+    width:40px; height:40px; border-radius:10px; display:flex; align-items:center; justify-content:center; color:#fff; flex:none;
+  }
+  .wk-cat-card-icon svg{ width:20px; height:20px; }
+  .wk-cat-card-name{ font-weight:700; font-size:.98rem; }
+  .wk-cat-card-sub{ font-size:.78rem; color:var(--ink-faint); line-height:1.35; }
+  .wk-cat-card-count{ font-size:.72rem; color:var(--ink-soft); font-weight:600; margin-top:auto; }
+  .wk-cat-empty-note{ color:var(--ink-faint); font-size:.85rem; margin-top:10px; }
+
+  .wk-filter-row{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:16px; }
+  .wk-filter-btn{
+    border:1px solid var(--border); background:var(--surface-2); color:var(--ink-soft);
+    border-radius:99px; padding:6px 13px; font-size:.78rem; font-weight:600; cursor:pointer;
+  }
+  .wk-filter-btn.active{ background:var(--teal); border-color:var(--teal); color:#fff; }
+
+  .wk-routine-row{ display:flex; align-items:center; gap:12px; padding:12px 0; cursor:pointer; }
+  .wk-routine-row + .wk-routine-row{ border-top:1px solid var(--border-soft); }
+  .wk-routine-icon{
+    width:38px; height:38px; border-radius:10px; flex:none; display:flex; align-items:center; justify-content:center;
+    color:#fff; background:var(--teal);
+  }
+  .wk-routine-icon svg{ width:18px; height:18px; }
+  .wk-routine-main{ flex:1; min-width:0; }
+  .wk-routine-name{ font-weight:600; font-size:.9rem; }
+  .wk-routine-meta{ font-size:.76rem; color:var(--ink-faint); margin-top:2px; }
+  .wk-fav-btn{ background:transparent; border:none; color:var(--ink-faint); cursor:pointer; flex:none; padding:4px; display:flex; }
+  .wk-fav-btn svg{ width:19px; height:19px; }
+  .wk-fav-btn.active{ color:var(--ember); }
+  .wk-fav-btn.active svg{ fill:var(--ember); }
+
+  .wk-detail-head{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
+  .wk-detail-icon{ width:52px; height:52px; border-radius:13px; display:flex; align-items:center; justify-content:center; color:#fff; background:var(--teal); flex:none; }
+  .wk-detail-icon svg{ width:26px; height:26px; }
+  .wk-detail-info{ flex:1; min-width:200px; }
+  .wk-detail-info h2{ font-size:1.25rem; line-height:1.2; }
+  .wk-detail-sub{ font-size:.84rem; color:var(--ink-faint); margin-top:2px; }
+  .wk-info-tiles{ display:grid; grid-template-columns:repeat(auto-fit,minmax(110px,1fr)); gap:10px; margin:16px 0; }
+  .wk-action-row{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:18px; }
+  .wk-action-row .btn{ display:inline-flex; align-items:center; gap:6px; }
+  .wk-action-row .btn svg{ width:16px; height:16px; flex:none; }
+
+  .wk-move-row{ padding:11px 0; border-top:1px solid var(--border-soft); cursor:pointer; }
+  .wk-move-row:first-child{ border-top:none; }
+  .wk-move-top{ display:flex; align-items:center; gap:10px; }
+  .wk-move-num{ width:22px; height:22px; border-radius:50%; background:var(--surface-2); color:var(--ink-soft); font-size:.7rem; font-weight:700; flex:none; display:flex; align-items:center; justify-content:center; }
+  .wk-move-name{ flex:1; font-weight:600; font-size:.87rem; }
+  .wk-move-dur{ font-size:.74rem; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace; flex:none; }
+  .wk-move-chevron{ flex:none; color:var(--ink-faint); transition:transform .12s ease; }
+  .wk-move-row.open .wk-move-chevron{ transform:rotate(180deg); }
+  .wk-move-how{ font-size:.82rem; color:var(--ink-soft); line-height:1.5; padding:8px 0 2px 32px; }
+
+  /* ---- Routine player ---- */
+  .wk-player{ display:flex; flex-direction:column; align-items:center; text-align:center; padding:10px 4px 4px; }
+  .wk-player-progress{ font-size:.76rem; color:var(--ink-faint); font-weight:600; letter-spacing:.03em; text-transform:uppercase; margin-bottom:6px; }
+  .wk-timer-ring{ position:relative; width:220px; height:220px; margin:6px 0 18px; }
+  .wk-timer-ring svg{ width:100%; height:100%; transform:rotate(-90deg); }
+  .wk-timer-label{ position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; }
+  .wk-timer-num{ font-family:'IBM Plex Mono',monospace; font-size:2.6rem; font-weight:700; line-height:1; color:var(--ink); }
+  .wk-timer-side{ font-size:.78rem; color:var(--ink-faint); margin-top:4px; text-transform:capitalize; }
+  .wk-move-title{ font-family:'Fraunces',serif; font-size:1.5rem; font-weight:600; margin-bottom:8px; }
+  .wk-move-instructions{ font-size:.88rem; color:var(--ink-soft); line-height:1.55; max-width:420px; margin-bottom:22px; }
+  .wk-player-controls{ display:flex; align-items:center; gap:14px; margin-bottom:20px; }
+  .wk-player-btn{
+    width:52px; height:52px; border-radius:50%; border:1px solid var(--border); background:var(--surface);
+    color:var(--ink); display:flex; align-items:center; justify-content:center; cursor:pointer; flex:none;
+  }
+  .wk-player-btn svg{ width:20px; height:20px; }
+  .wk-player-btn.primary{ width:64px; height:64px; background:var(--teal); border-color:var(--teal); color:#fff; }
+  .wk-player-btn.primary svg{ width:24px; height:24px; }
+  .wk-player-bar-track{ width:100%; max-width:420px; height:5px; border-radius:4px; background:var(--surface-2); overflow:hidden; margin-bottom:6px; }
+  .wk-player-bar-fill{ display:block; height:100%; background:var(--teal); border-radius:4px; transition:width .3s linear; }
+  .wk-player-finish{ background:transparent; border:none; color:var(--ink-faint); font-size:.8rem; font-weight:600; cursor:pointer; padding:6px; margin-top:4px; }
+  .wk-player-finish:hover{ color:var(--ink); }
+  .wk-next-up{ font-size:.82rem; color:var(--ink-faint); margin-top:8px; }
+
+  /* ---- Completion screen ---- */
+  .wk-complete{ text-align:center; padding:16px 4px 4px; }
+  .wk-complete-icon{ width:64px; height:64px; border-radius:50%; background:var(--good); color:#fff; display:flex; align-items:center; justify-content:center; margin:0 auto 16px; }
+  .wk-complete-icon svg{ width:30px; height:30px; }
+  .wk-complete-title{ font-family:'Fraunces',serif; font-size:1.5rem; font-weight:600; }
+  .wk-complete-sub{ font-size:.85rem; color:var(--ink-faint); margin-top:4px; }
+  .wk-complete-stats{ display:flex; justify-content:center; gap:26px; margin:20px 0; flex-wrap:wrap; }
+  .wk-complete-stat-num{ font-family:'IBM Plex Mono',monospace; font-size:1.3rem; font-weight:700; }
+  .wk-complete-stat-label{ font-size:.7rem; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.04em; margin-top:2px; }
+  .wk-feel-row{ display:flex; gap:8px; justify-content:center; margin:18px 0; flex-wrap:wrap; }
+  .wk-feel-btn{
+    border:1px solid var(--border); background:var(--surface-2); color:var(--ink-soft);
+    border-radius:99px; padding:8px 15px; font-size:.82rem; cursor:pointer;
+  }
+  .wk-feel-btn.active{ background:var(--teal); border-color:var(--teal); color:#fff; }
+  .wk-complete-actions{ display:flex; gap:8px; justify-content:center; margin-top:10px; flex-wrap:wrap; }
+
+  @media (max-width:480px){
+    .wk-timer-ring{ width:180px; height:180px; }
+    .wk-timer-num{ font-size:2.1rem; }
+  }
 </style>
 </head>
 <body>
@@ -1588,7 +1693,8 @@
         unitSystem: "metric"
       },
       homeMetricPrefs: ["running","training","reading","spending"],
-      travel: { trips: [], places: [], tripPlaces: [], itinerary: [], photos: [] }
+      travel: { trips: [], places: [], tripPlaces: [], itinerary: [], photos: [] },
+      workoutFavorites: [] // array of built-in routine ids (WORKOUT_ROUTINES), e.g. Stretching favorites
     };
   }
 
@@ -1891,6 +1997,9 @@
       duration: (typeof w.duration==="number") ? w.duration : 0,
       notes: w.notes || "",
       photos: Array.isArray(w.photos) ? w.photos : [], // dataURLs, snapped straight from camera or picked from gallery
+      routineId: w.routineId || null,       // links back to a built-in WORKOUT_ROUTINES entry, when this came from the Library
+      routineName: w.routineName || "",     // denormalized display name at completion time (survives routine list changes)
+      feeling: w.feeling || "",             // optional post-routine mood: "much_better" | "better" | "same"
       createdAt: w.createdAt || todayISO()
     };
   }
@@ -1948,6 +2057,7 @@
         if(!Array.isArray(state.travel.tripPlaces)) state.travel.tripPlaces = [];
         if(!Array.isArray(state.travel.itinerary)) state.travel.itinerary = [];
         if(!Array.isArray(state.travel.photos)) state.travel.photos = [];
+        if(!Array.isArray(state.workoutFavorites)) state.workoutFavorites = [];
       }
     state.habits = (state.habits||[]).map(normalizeHabit);
     state.workouts = (state.workouts||[]).map(normalizeWorkout);
@@ -3164,6 +3274,21 @@
 
   var workoutPendingPhoto = null; // dataURL staged from the Log-a-Workout form's camera/photo field, attached on submit
 
+  /* ---- Workout Library nav/UI state ---- */
+  var workoutsPage = "overview";     // 'overview' | 'library' | 'history' | 'progress' | 'favorites'
+  var wkLibPage = "categories";      // 'categories' | 'category' | 'routine' | 'player' | 'complete'  (within workoutsPage==='library')
+  var wkLibCategoryId = null;        // e.g. "stretching"
+  var wkLibFilter = "all";           // 'all' | 'full-body' | 'lower-body' | 'upper-body' | 'favorites'
+  var wkActiveRoutineId = null;
+  var wkExpandedMovementIdx = null;  // which movement row is expanded on the routine detail page
+  var wkShowSchedule = false;        // Schedule modal open on the routine detail page
+  var wkShowTransitions = false;     // optional 5s "up next" transition between movements — default OFF per spec
+  var wkPlayer = null;               // { routineId, index, remaining, paused, sourceBlockId } while a routine is running
+  var wkPlayerTimer = null;          // interval handle, not persisted
+  var wkCompletion = null;           // { routine, durationMin, completedAt, feeling, note, savedWorkoutId } shown on the finish screen
+  var wkShowCompletionNote = false;
+  var wkHistoryFilter = "all";       // 'all' | 'training' | 'recovery' — History tab split (stretching = recovery)
+
   /* ---- Today nav/UI state — Today is the execution layer of the same daily-plan data Calendar
      plans with (state.timeBlocks/state.dayNotes), browsed independently of Calendar's own view state ---- */
   var todayViewDate = null;        // ISO date being browsed on Today; lazily set to real today
@@ -3825,6 +3950,11 @@
   var TARGET_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.8"/><circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none"/></svg>';
   var TIMELINE_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="4.5" cy="6" r="1.6" fill="currentColor" stroke="none"/><circle cx="4.5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="4.5" cy="18" r="1.6" fill="currentColor" stroke="none"/><path d="M9 6h11M9 12h11M9 18h11"/></svg>';
   var DOTS3_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="5" cy="12" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="19" cy="12" r="1.8"/></svg>';
+  var PLAY_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M7 4.5v15l13-7.5Z"/></svg>';
+  var PAUSE_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="4.5" width="4.4" height="15" rx="1"/><rect x="13.6" y="4.5" width="4.4" height="15" rx="1"/></svg>';
+  var CHEVRON_LEFT_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5 8 12l7 7"/></svg>';
+  var SKIPNEXT_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M6 5v14l11-7Z"/><rect x="17.5" y="5" width="2.2" height="14" rx="1"/></svg>';
+  var SKIPPREV_SVG = '<svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M18 5v14L7 12Z"/><rect x="4.3" y="5" width="2.2" height="14" rx="1"/></svg>';
   /* Icons are looked up by tab id inside a function (not baked into the TABS array itself) so
      this can sit anywhere in the file regardless of where TABS is declared — see the JS-ordering
      note in the project doc about var object literals vs. function declarations. */
@@ -3927,8 +4057,15 @@
     var today = todayISO();
     var runKm = 0;
     state.challenges.activities.forEach(function(a){ if(a.date===today && (a.type==="run"||a.type==="run-long") && a.distance) runKm += Number(a.distance||0); });
-    var trainMin = 0;
-    state.workouts.forEach(function(w){ if(w.date===today) trainMin += Number(w.duration||0); });
+    /* Recovery sessions (a Library stretching routine) are kept out of trainMin so a 10-minute
+       stretch doesn't quietly inflate the "Training" stat — they still count, just as their own
+       recoveryMin figure, per "don't let a recovery session distort training volume". */
+    var trainMin = 0, recoveryMin = 0;
+    state.workouts.forEach(function(w){
+      if(w.date!==today) return;
+      if(w.type==="stretching") recoveryMin += Number(w.duration||0);
+      else trainMin += Number(w.duration||0);
+    });
     state.challenges.activities.forEach(function(a){ if(a.date===today) trainMin += Number(a.durationMinutes||0); });
     var pages = pagesReadOnDate(today);
     var spent = state.expenses.filter(function(e){ return e.date===today; }).reduce(function(sum,e){ return sum+Number(e.amount||0); },0);
@@ -3936,7 +4073,7 @@
     state.study.sessions.forEach(function(ss){ if(ss.date===today) studyMin += Number(ss.minutes||0); });
     var activeHb = activeHabits();
     var habitsDone = activeHb.filter(function(h){ return h.logs[today]; }).length;
-    return { runKm:runKm, trainMin:trainMin, pages:pages, spent:spent, studyMin:studyMin, habitsDone:habitsDone, habitsActive:activeHb.length };
+    return { runKm:runKm, trainMin:trainMin, recoveryMin:recoveryMin, pages:pages, spent:spent, studyMin:studyMin, habitsDone:habitsDone, habitsActive:activeHb.length };
   }
 
   /* ============ Home "Today" stats: customizable metric picker (v21) ============
@@ -3951,7 +4088,8 @@
       { key:"reading",  label:"Read",     format:function(tm){ return tm.pages>0 ? tm.pages+" p" : "—"; } },
       { key:"study",    label:"Study",    format:function(tm){ return tm.studyMin>0 ? fmtMinutes(tm.studyMin) : "—"; } },
       { key:"spending", label:"Spent",    format:function(tm){ return tm.spent>0 ? money(tm.spent) : "—"; } },
-      { key:"habits",   label:"Habits",   format:function(tm){ return tm.habitsActive>0 ? (tm.habitsDone+" / "+tm.habitsActive) : "—"; } }
+      { key:"habits",   label:"Habits",   format:function(tm){ return tm.habitsActive>0 ? (tm.habitsDone+" / "+tm.habitsActive) : "—"; } },
+      { key:"recovery", label:"Recovery", format:function(tm){ return tm.recoveryMin>0 ? fmtMinutes(tm.recoveryMin) : "—"; } }
     ];
   }
   function homeMetricByKey(key){
@@ -4334,14 +4472,16 @@
     var meta = timeBlockCatMeta(b.category);
     var completed = blockAutoCompleted(b);
     var dur = blockDurationMin(b);
-    var metaText = completed ? blockLoggedDetail(b) : (b.notes ? esc(b.notes) : (b.endTime ? dur+" min" : ""));
-    return '<div class="today-block-row" style="--accent:'+meta.color+'" data-block-edit="'+b.id+'">'+
+    var isRoutine = b.linkedType==="workoutTemplate";
+    var metaText = completed ? blockLoggedDetail(b) : (b.notes ? esc(b.notes) : ((b.endTime||isRoutine) ? dur+" min" : ""));
+    var clickAttr = isRoutine ? ' data-wk-open-block="'+b.id+'"' : ' data-block-edit="'+b.id+'"';
+    return '<div class="today-block-row" style="--accent:'+meta.color+'"'+clickAttr+'>'+
       '<span class="today-block-dot"></span>'+
       '<span class="today-block-time">'+esc(b.startTime||"")+'</span>'+
-      '<span class="today-block-icon">'+timeBlockCatIcon(b.category)+'</span>'+
+      '<span class="today-block-icon">'+(isRoutine?LEAF_SVG:timeBlockCatIcon(b.category))+'</span>'+
       '<div class="today-block-main">'+
         '<span class="today-block-title'+(completed?" done":"")+'">'+esc(b.title)+'</span>'+
-        '<span class="today-block-cat">'+esc(meta.label)+'</span>'+
+        '<span class="today-block-cat">'+(isRoutine?"Stretching":esc(meta.label))+'</span>'+
         (metaText ? '<span class="today-block-meta">'+metaText+'</span>' : "")+
       '</div>'+
       '<button type="button" class="today-block-check'+(completed?" done":"")+'" data-block-toggle="'+b.id+'" title="Mark completed">'+(completed?CHECK_SVG:"")+'</button>'+
@@ -5194,8 +5334,168 @@
     return html;
   }
 
+  /* ============ WORKOUT LIBRARY: built-in content ============
+     Static content, not persisted state — mirrors how TIME_BLOCK_CATS/PRESET_CATS work elsewhere
+     in this app. A Movement is defined once and referenced by id from any routine that uses it
+     (per the "do not duplicate movement definitions inside every routine" requirement), with the
+     per-routine side (left/right) carried on the routine's own movement reference, not on the
+     Movement itself, since the same "Calf stretch" movement is one record used twice (once per
+     side) inside a routine, not two near-duplicate movements. */
+  var MOVEMENT_LIBRARY = {
+    "neck-shoulder-rolls":    { name:"Neck + shoulder rolls", category:"neck",  instructions:"Gently drop your ear toward one shoulder, then roll your shoulders back in slow circles. Keep your breathing relaxed throughout." },
+    "standing-side-stretch":  { name:"Standing side stretch", category:"full",  instructions:"Reach one arm overhead and lean gently to the opposite side. Keep both feet grounded and breathe into the stretch." },
+    "chest-opener":           { name:"Chest opener", category:"upper",  instructions:"Clasp your hands behind your back and gently lift your chest. Draw your shoulder blades together and hold." },
+    "forward-fold":           { name:"Forward fold", category:"full",  instructions:"Hinge forward from the hips and allow your upper body to relax toward the floor. Keep a small bend in the knees if needed." },
+    "low-lunge":              { name:"Low lunge", category:"lower",  instructions:"Step one foot forward and lower the opposite knee toward the mat. Gently move the hips forward until you feel a comfortable stretch through the front of the hip." },
+    "seated-hamstring":       { name:"Seated hamstring stretch", category:"lower",  instructions:"Sit with one leg extended and gently hinge forward over it. Keep your back long rather than rounding forward." },
+    "butterfly-stretch":      { name:"Butterfly stretch", category:"lower",  instructions:"Sit with the soles of your feet together and let your knees fall open. Gently lean forward from the hips if that feels comfortable." },
+    "lying-spinal-twist":     { name:"Lying spinal twist", category:"full",  instructions:"Lying on your back, drop both knees to one side while keeping your shoulders on the mat. Turn your head the opposite way for a gentle full-body twist." },
+    "childs-pose":            { name:"Child's pose", category:"full",  instructions:"Sit your hips back toward your heels and reach your arms forward along the floor. Relax your shoulders and breathe slowly." },
+    "arm-circles":            { name:"Arm circles", category:"upper",  instructions:"Extend your arms out to the sides and make slow, controlled circles. Reverse direction halfway through." },
+    "standing-reach-side-bend": { name:"Standing reach + side bend", category:"full",  instructions:"Reach both arms overhead, then lean gently side to side. Keep your movements slow and controlled." },
+    "good-mornings":          { name:"Good mornings", category:"lower",  instructions:"Stand with feet hip-width apart and hinge forward from the hips, keeping your back flat. Rise back up slowly and repeat." },
+    "deep-squat-hold":        { name:"Deep squat hold", category:"lower",  instructions:"Lower into a comfortable deep squat with your feet flat on the floor. Rest your elbows against your inner knees and hold." },
+    "cat-cow":                { name:"Cat-cow", category:"full",  instructions:"Start on your hands and knees. Slowly alternate between gently rounding your back and extending your spine." },
+    "downward-dog":           { name:"Downward dog", category:"full",  instructions:"From hands and knees, lift your hips up and back to form an inverted V. Pedal your heels gently to ease into your calves." },
+    "cobra-stretch":          { name:"Cobra stretch", category:"full",  instructions:"Lying on your front, press through your hands to lift your chest while keeping your hips on the mat. Keep the movement gentle and pain-free." },
+    "neck-stretch":           { name:"Neck stretch", category:"neck",  instructions:"Gently tilt your head toward one shoulder until you feel a stretch along the opposite side of your neck. Hold, then switch sides." },
+    "cross-body-shoulder":    { name:"Cross-body shoulder stretch", category:"upper",  instructions:"Bring one arm across your chest and use the other arm to gently hold it in place. Keep your shoulder relaxed away from your ear." },
+    "chest-stretch":          { name:"Chest stretch", category:"upper",  instructions:"Place your forearm on a wall or doorway at shoulder height and gently rotate away from it. Keep the stretch light and controlled." },
+    "seated-forward-fold":    { name:"Seated forward fold", category:"lower",  instructions:"Sit with both legs extended and hinge forward from the hips. Let your hands rest wherever feels comfortable along your legs." },
+    "figure-four":            { name:"Figure-four", category:"lower",  instructions:"Lie on your back and place one ankle over the opposite thigh. Gently draw the supporting leg toward your body." },
+    "knees-to-chest":         { name:"Knees-to-chest", category:"full",  instructions:"Lying on your back, draw both knees toward your chest and hold them gently with your hands. Let your lower back relax into the mat." },
+    "relaxed-breathing":      { name:"Relaxed breathing", category:"full",  instructions:"Lie or sit comfortably and take slow, deep breaths. Let your whole body soften with each exhale." },
+    "calf-stretch":           { name:"Calf stretch", category:"lower",  instructions:"Step one foot back and press the heel toward the floor, keeping the back leg straight. Lean gently into the front leg until you feel the stretch." },
+    "hamstring-stretch":      { name:"Hamstring stretch", category:"lower",  instructions:"Extend one leg in front of you with the heel on the floor and gently hinge forward. Keep your back long rather than rounding." },
+    "quad-stretch":           { name:"Quad stretch", category:"lower",  instructions:"Standing on one leg, draw the opposite heel toward your glutes, holding your ankle for support. Keep your knees close together." },
+    "hip-flexor-stretch":     { name:"Hip flexor stretch", category:"lower",  instructions:"From a low lunge position, gently press your hips forward. Keep your torso upright and core gently engaged." },
+    "wide-leg-forward-fold":  { name:"Wide-leg forward fold", category:"lower",  instructions:"Stand with your feet wide apart and hinge forward from the hips. Let your head and arms relax toward the floor." },
+    "relaxed-lying-stretch":  { name:"Relaxed lying stretch", category:"full",  instructions:"Lie on your back with your arms and legs relaxed and slightly spread. Let your whole body soften into the floor." },
+    "glute-stretch":          { name:"Glute stretch", category:"lower",  instructions:"Lying on your back, cross one ankle over the opposite knee and gently draw the leg toward your chest. Keep your lower back relaxed." },
+    "shoulder-rolls":         { name:"Shoulder rolls", category:"upper",  instructions:"Slowly roll your shoulders up, back, and down in a smooth circular motion. Keep your neck relaxed throughout." },
+    "triceps-stretch":        { name:"Triceps stretch", category:"upper",  instructions:"Reach one arm overhead and bend the elbow, letting your hand rest between your shoulder blades. Use the other hand to gently guide the elbow." },
+    "wrist-forearm-stretch":  { name:"Wrist + forearm stretch", category:"upper",  instructions:"Extend one arm forward and gently pull the fingers back with your other hand. Switch the direction of the stretch to work the opposite side of the wrist." },
+    "neck-side-to-side":      { name:"Neck side-to-side", category:"neck",  instructions:"Slowly turn your head to look over one shoulder, then the other. Move gently and stay within a comfortable range." },
+    "chin-tucks":             { name:"Chin tucks + gentle neck stretch", category:"neck",  instructions:"Draw your chin straight back to lengthen the back of your neck, then gently tilt your head side to side. Keep your shoulders relaxed and down." },
+    "upper-back-hug-stretch": { name:"Upper-back hug stretch", category:"upper",  instructions:"Wrap your arms around yourself in a hug and round your upper back slightly. Reach your shoulder blades apart and hold." },
+    "shoulder-stretch":       { name:"Shoulder stretch", category:"upper",  instructions:"Bring one arm across your body at shoulder height and gently press it closer with your other arm. Keep your shoulder down and relaxed." },
+    "thread-the-needle":      { name:"Thread the needle", category:"upper",  instructions:"From hands and knees, slide one arm underneath your body and rest your shoulder and ear on the mat. Keep the movement slow and supported." }
+  };
+  function movementById(id){ return MOVEMENT_LIBRARY[id] || { name:id, category:"full", instructions:"" }; }
+
+  var ROUTINE_MOVEMENT_SEC = 60; // every built-in routine's default per-movement duration
+  function rm(movementId, side){ return { movementId:movementId, side:side||null, durationSeconds:ROUTINE_MOVEMENT_SEC }; }
+  var WORKOUT_ROUTINES = [
+    { id:"full-body-reset", name:"Full Body Reset", focus:"full-body",
+      description:"A calm head-to-toe stretching routine for after training or at the end of the day.",
+      movements:[ rm("neck-shoulder-rolls"), rm("standing-side-stretch"), rm("chest-opener"), rm("forward-fold"),
+        rm("low-lunge","left"), rm("low-lunge","right"), rm("seated-hamstring"), rm("butterfly-stretch"),
+        rm("lying-spinal-twist"), rm("childs-pose") ] },
+    { id:"morning-mobility", name:"Morning Mobility", focus:"full-body",
+      description:"Gentle movement to loosen the body and start the day feeling mobile.",
+      movements:[ rm("arm-circles"), rm("standing-reach-side-bend"), rm("good-mornings"), rm("deep-squat-hold"),
+        rm("low-lunge","left"), rm("low-lunge","right"), rm("cat-cow"), rm("downward-dog"),
+        rm("cobra-stretch"), rm("childs-pose") ] },
+    { id:"evening-unwind", name:"Evening Unwind", focus:"full-body",
+      description:"A slow, relaxing sequence for winding down after a long day.",
+      movements:[ rm("neck-stretch"), rm("cross-body-shoulder"), rm("chest-stretch"), rm("seated-forward-fold"),
+        rm("figure-four","left"), rm("figure-four","right"), rm("knees-to-chest"), rm("lying-spinal-twist","left"),
+        rm("lying-spinal-twist","right"), rm("relaxed-breathing") ] },
+    { id:"runners-lower-body", name:"Runner's Lower Body", focus:"lower-body",
+      description:"A simple post-run routine focusing on the calves, hamstrings, quads and hips.",
+      movements:[ rm("calf-stretch","left"), rm("calf-stretch","right"), rm("hamstring-stretch","left"), rm("hamstring-stretch","right"),
+        rm("quad-stretch","left"), rm("quad-stretch","right"), rm("hip-flexor-stretch","left"), rm("hip-flexor-stretch","right"),
+        rm("butterfly-stretch"), rm("childs-pose") ] },
+    { id:"hip-hamstring-release", name:"Hip & Hamstring Release", focus:"lower-body",
+      description:"Extra attention for tight hips, glutes and the backs of the legs.",
+      movements:[ rm("seated-hamstring","left"), rm("seated-hamstring","right"), rm("figure-four","left"), rm("figure-four","right"),
+        rm("low-lunge","left"), rm("low-lunge","right"), rm("butterfly-stretch"), rm("wide-leg-forward-fold"),
+        rm("knees-to-chest"), rm("relaxed-lying-stretch") ] },
+    { id:"post-leg-day-stretch", name:"Post-Leg-Day Stretch", focus:"lower-body",
+      description:"A straightforward recovery routine after running, squats or lower-body training.",
+      movements:[ rm("quad-stretch","left"), rm("quad-stretch","right"), rm("calf-stretch","left"), rm("calf-stretch","right"),
+        rm("hamstring-stretch","left"), rm("hamstring-stretch","right"), rm("glute-stretch","left"), rm("glute-stretch","right"),
+        rm("hip-flexor-stretch"), rm("childs-pose") ] },
+    { id:"upper-body-release", name:"Upper Body Release", focus:"upper-body",
+      description:"Loosen the neck, shoulders, chest, arms and upper back.",
+      movements:[ rm("neck-stretch"), rm("shoulder-rolls"), rm("cross-body-shoulder","left"), rm("cross-body-shoulder","right"),
+        rm("triceps-stretch","left"), rm("triceps-stretch","right"), rm("chest-opener"), rm("wrist-forearm-stretch"),
+        rm("cat-cow"), rm("childs-pose") ] },
+    { id:"desk-screen-reset", name:"Desk & Screen Reset", focus:"upper-body",
+      description:"A quick reset for the neck, shoulders, chest and wrists after sitting or working at a screen.",
+      movements:[ rm("neck-side-to-side"), rm("chin-tucks"), rm("shoulder-rolls"), rm("chest-opener"),
+        rm("chest-stretch","left"), rm("chest-stretch","right"), rm("upper-back-hug-stretch"), rm("wrist-forearm-stretch"),
+        rm("cat-cow"), rm("childs-pose") ] },
+    { id:"shoulders-back", name:"Shoulders & Back", focus:"upper-body",
+      description:"Easy mobility for the shoulders, upper back and thoracic spine.",
+      movements:[ rm("arm-circles"), rm("shoulder-stretch","left"), rm("shoulder-stretch","right"), rm("triceps-stretch","left"),
+        rm("triceps-stretch","right"), rm("chest-opener"), rm("cat-cow"), rm("thread-the-needle","left"),
+        rm("thread-the-needle","right"), rm("childs-pose") ] },
+    { id:"recovery-flow", name:"Recovery Flow", focus:"full-body",
+      description:"A slow full-body sequence for recovery days or after harder training.",
+      movements:[ rm("cat-cow"), rm("downward-dog"), rm("low-lunge","left"), rm("low-lunge","right"),
+        rm("figure-four","left"), rm("figure-four","right"), rm("seated-forward-fold"), rm("lying-spinal-twist","left"),
+        rm("lying-spinal-twist","right"), rm("relaxed-breathing") ] }
+  ];
+  var WORKOUT_ROUTINE_FOCUS_LABELS = { "full-body":"Full body", "lower-body":"Lower body", "upper-body":"Upper body" };
+  function routineById(id){ return WORKOUT_ROUTINES.filter(function(r){ return r.id===id; })[0] || null; }
+  function routineDurationMin(r){ return Math.round(r.movements.length * ROUTINE_MOVEMENT_SEC / 60); }
+  function isFavoriteRoutine(id){ return state.workoutFavorites.indexOf(id) !== -1; }
+  function toggleFavoriteRoutine(id){
+    var i = state.workoutFavorites.indexOf(id);
+    if(i===-1) state.workoutFavorites.push(id); else state.workoutFavorites.splice(i,1);
+    save();
+  }
+  /* Library category shelf — deliberately only lists categories that actually have real,
+     built-in content behind them right now (Stretching), per "do not populate unfinished
+     categories with fake workouts." The architecture (this object + WORKOUT_ROUTINES' shape)
+     is ready for Running/CrossFit/etc. to be added the same way later without rework — they
+     just aren't invented here. */
+  var WORKOUT_LIBRARY_CATEGORIES = [
+    { id:"stretching", label:"Stretching", subtitle:"Easy 10-minute routines for mobility and recovery.", icon:"leaf", color:"var(--teal)",
+      count: function(){ return WORKOUT_ROUTINES.length; }, unit:"routines" }
+  ];
+
   /* ============ WORKOUTS view ============ */
-  function renderWorkouts(){
+  function wkCategoryIconSvg(key){
+    switch(key){
+      case "leaf": return LEAF_SVG;
+      case "running": return SHOE_SVG;
+      case "crossfit": return DUMBBELL_SVG;
+      default: return LEAF_SVG;
+    }
+  }
+  var WORKOUTS_SUBTABS = [["overview","Overview"],["library","Library"],["history","History"],["progress","Progress"],["favorites","Favorites"]];
+  function workoutsHeadHTML(){
+    return '<div class="habits-head"><div><h2>Workouts</h2><p>Train, stretch, and keep score of your effort.</p></div></div>';
+  }
+  function workoutsSubtabsHTML(){
+    return '<div class="cal-subtabs" style="margin-bottom:18px">'+WORKOUTS_SUBTABS.map(function(t){
+      return '<button type="button" class="cal-subtab'+(workoutsPage===t[0]?" active":"")+'" data-wk-page="'+t[0]+'">'+t[1]+'</button>';
+    }).join("")+'</div>';
+  }
+
+  /* Shared between the Overview log list and the History page — a routine completed from the
+     Library shows its routine name + "Stretching"; a plain freeform logged workout looks exactly
+     like it always has. */
+  function workoutRowHTML(w){
+    var hasPhoto = w.photos && w.photos.length;
+    var isRoutine = !!w.routineId;
+    var lead = hasPhoto ? '<img src="'+w.photos[0]+'" alt="" style="width:34px;height:34px;border-radius:8px;object-fit:cover;flex-shrink:0">' :
+      (isRoutine ? '<span class="wk-routine-icon" style="width:34px;height:34px;border-radius:8px">'+LEAF_SVG+'</span>' : '<span class="swatch" style="background:'+colorForCategory(w.type)+'"></span>');
+    var title = isRoutine ? esc(w.routineName || "Stretching routine") : capitalize(w.type)+(w.notes?' — '+esc(w.notes):'');
+    var metaBits = [];
+    if(isRoutine) metaBits.push("Stretching");
+    metaBits.push(daysAgoLabel(w.date));
+    if(hasPhoto && w.photos.length>1) metaBits.push(w.photos.length+" photos");
+    return '<div class="row">'+lead+
+      '<div class="main"><div class="title">'+title+'</div><div class="meta">'+metaBits.join(" · ")+'</div></div>'+
+      '<div class="amount">'+(w.duration?w.duration+" min":"")+'</div>'+
+      (isRoutine ? '' : '<label class="btn-ghost" style="cursor:pointer;display:flex;align-items:center" title="Add photo">'+CAMERA_SVG+'<input type="file" accept="image/*" capture="environment" class="wk-row-photo-input" data-wk-photo="'+w.id+'" style="display:none"></label>')+
+      '<button class="btn-ghost" data-del-workout="'+w.id+'" title="Delete">✕</button></div>';
+  }
+
+  function workoutOverviewHTML(){
     var today = todayISO();
     var weekList = state.workouts.filter(function(w){ return inSameWeek(w.date, today); });
     var byType = {};
@@ -5210,6 +5510,11 @@
     '</div>'+
     '<div class="grid-2">'+
       '<div class="stack-col">'+
+      '<div class="panel" style="border-color:var(--teal)">'+
+        '<div class="panel-head"><h2 style="font-size:.9rem">Workout Library</h2><span class="hint">Guided routines</span></div>'+
+        '<p style="font-size:.84rem;color:var(--ink-soft);margin-bottom:12px">Pick a stretching routine, follow the built-in timer, and it logs itself here when you finish.</p>'+
+        '<button type="button" class="btn btn-primary" style="background:var(--teal)" data-wk-page="library">Browse Library</button>'+
+      '</div>'+
       '<div class="panel add-block" style="--accent:var(--plum)">'+
         '<div class="panel-head"><h2>Log a Workout</h2></div>'+
         '<form class="stack" id="workout-form">'+
@@ -5231,18 +5536,363 @@
       (typeEntries.length? '<div class="panel"><div class="panel-head"><h2 style="font-size:.9rem">Minutes by type (this week)</h2></div>'+barListHTML(typeEntries,"var(--plum)",function(v){return v+"m";})+'</div>':'')+
       '</div>'+
       '<div class="panel"><div class="panel-head"><h2>Workout log</h2><span class="hint">'+list.length+' total</span></div>'+
-        (list.length? '<div class="rows">'+list.map(function(w){
-          var hasPhoto = w.photos && w.photos.length;
-          var lead = hasPhoto ? '<img src="'+w.photos[0]+'" alt="" style="width:34px;height:34px;border-radius:8px;object-fit:cover;flex-shrink:0">' : '<span class="swatch" style="background:'+colorForCategory(w.type)+'"></span>';
-          return '<div class="row">'+lead+
-            '<div class="main"><div class="title">'+capitalize(w.type)+(w.notes?' — '+esc(w.notes):'')+'</div><div class="meta">'+daysAgoLabel(w.date)+(hasPhoto&&w.photos.length>1?' · '+w.photos.length+' photos':'')+'</div></div>'+
-            '<div class="amount">'+(w.duration?w.duration+" min":"")+'</div>'+
-            '<label class="btn-ghost" style="cursor:pointer;display:flex;align-items:center" title="Add photo">'+CAMERA_SVG+'<input type="file" accept="image/*" capture="environment" class="wk-row-photo-input" data-wk-photo="'+w.id+'" style="display:none"></label>'+
-            '<button class="btn-ghost" data-del-workout="'+w.id+'" title="Delete">✕</button></div>';
-        }).join("")+'</div>' : '<p class="empty">No workouts yet.</p>')+
+        (list.length? '<div class="rows">'+list.map(workoutRowHTML).join("")+'</div>' : '<p class="empty">No workouts yet.</p>')+
       '</div>'+
     '</div>';
     return html;
+  }
+
+  /* ---- Library: category shelf ---- */
+  function workoutLibraryCategoriesHTML(){
+    var cards = WORKOUT_LIBRARY_CATEGORIES.map(function(cat){
+      return '<button type="button" class="wk-cat-card" data-wk-open-category="'+cat.id+'">'+
+        '<span class="wk-cat-card-icon" style="background:'+cat.color+'">'+wkCategoryIconSvg(cat.icon)+'</span>'+
+        '<span class="wk-cat-card-name">'+esc(cat.label)+'</span>'+
+        '<span class="wk-cat-card-sub">'+esc(cat.subtitle)+'</span>'+
+        '<span class="wk-cat-card-count">'+cat.count()+' '+esc(cat.unit)+'</span>'+
+      '</button>';
+    }).join("");
+    return '<div class="panel"><div class="panel-head"><h2>Workout Library</h2><span class="hint">Choose a type of training</span></div>'+
+      '<div class="wk-cat-grid">'+cards+'</div>'+
+      '<p class="wk-cat-empty-note">More types of training will show up here once they have real routines behind them — nothing is filled in with placeholder workouts.</p>'+
+    '</div>';
+  }
+
+  /* ---- Library: routine list for one category, with focus/favorites filters ---- */
+  var WK_FILTERS = [["all","All"],["full-body","Full body"],["lower-body","Lower body"],["upper-body","Upper body"],["favorites","Favorites"]];
+  function workoutCategoryHTML(catId){
+    var cat = WORKOUT_LIBRARY_CATEGORIES.filter(function(c){ return c.id===catId; })[0];
+    if(!cat) return workoutLibraryCategoriesHTML();
+    var routines = WORKOUT_ROUTINES.slice();
+    if(wkLibFilter==="favorites") routines = routines.filter(function(r){ return isFavoriteRoutine(r.id); });
+    else if(wkLibFilter!=="all") routines = routines.filter(function(r){ return r.focus===wkLibFilter; });
+    var filterHTML = '<div class="wk-filter-row">'+WK_FILTERS.map(function(f){
+      return '<button type="button" class="wk-filter-btn'+(wkLibFilter===f[0]?" active":"")+'" data-wk-filter="'+f[0]+'">'+f[1]+'</button>';
+    }).join("")+'</div>';
+    var rowsHTML = !routines.length ? '<p class="empty">No routines match this filter yet.</p>' :
+      '<div class="rows">'+routines.map(workoutRoutineRowHTML).join("")+'</div>';
+    return '<button type="button" class="cal-back-btn" data-wk-back-categories style="margin-bottom:12px">&larr; Library</button>'+
+      '<div class="panel"><div class="panel-head"><h2>'+esc(cat.label)+'</h2><span class="hint">'+esc(cat.subtitle)+'</span></div>'+
+      filterHTML + rowsHTML + '</div>';
+  }
+  function workoutRoutineRowHTML(r){
+    var fav = isFavoriteRoutine(r.id);
+    return '<div class="wk-routine-row" data-wk-open-routine="'+r.id+'">'+
+      '<span class="wk-routine-icon">'+LEAF_SVG+'</span>'+
+      '<div class="wk-routine-main"><div class="wk-routine-name">'+esc(r.name)+'</div>'+
+        '<div class="wk-routine-meta">'+WORKOUT_ROUTINE_FOCUS_LABELS[r.focus]+' · '+routineDurationMin(r)+' min · '+r.movements.length+' movements</div></div>'+
+      '<button type="button" class="wk-fav-btn'+(fav?" active":"")+'" data-wk-toggle-fav="'+r.id+'" title="'+(fav?"Remove favorite":"Add favorite")+'">'+HEART_SVG+'</button>'+
+    '</div>';
+  }
+
+  /* ---- Library: routine detail page ---- */
+  function workoutRoutineDetailHTML(routineId){
+    var r = routineById(routineId);
+    if(!r) return workoutLibraryCategoriesHTML();
+    var fav = isFavoriteRoutine(r.id);
+    var durMin = routineDurationMin(r);
+    var crumb = '<button type="button" class="cal-back-btn" data-wk-back-category style="margin-bottom:12px">&larr; Stretching</button>';
+    var tiles = '<div class="wk-info-tiles">'+
+      '<div class="stat-tile" style="--accent:var(--teal)"><div class="label">Duration</div><div class="value">'+durMin+'m</div></div>'+
+      '<div class="stat-tile" style="--accent:var(--teal)"><div class="label">Movements</div><div class="value">'+r.movements.length+'</div></div>'+
+      '<div class="stat-tile" style="--accent:var(--teal)"><div class="label">Difficulty</div><div class="value" style="font-size:1rem">Easy</div></div>'+
+      '<div class="stat-tile" style="--accent:var(--teal)"><div class="label">Equipment</div><div class="value" style="font-size:1rem">None</div></div>'+
+    '</div>';
+    var actions = '<div class="wk-action-row">'+
+      '<button type="button" class="btn btn-primary" style="background:var(--teal)" data-wk-start-routine="'+r.id+'">'+PLAY_SVG+' Start routine</button>'+
+      '<button type="button" class="btn" data-wk-toggle-fav="'+r.id+'" style="'+(fav?'background:var(--ember);color:#fff;border-color:var(--ember)':'')+'">'+HEART_SVG+' '+(fav?"Favorited":"Favorite")+'</button>'+
+      '<button type="button" class="btn" data-wk-open-schedule="'+r.id+'">'+CALENDAR_SVG+' Schedule</button>'+
+    '</div>';
+    var movesHTML = r.movements.map(function(ref, idx){
+      var m = movementById(ref.movementId);
+      var open = wkExpandedMovementIdx===idx;
+      return '<div class="wk-move-row'+(open?" open":"")+'" data-wk-move-toggle="'+idx+'">'+
+        '<div class="wk-move-top">'+
+          '<span class="wk-move-num">'+(idx+1)+'</span>'+
+          '<span class="wk-move-name">'+esc(m.name)+(ref.side?' ('+capitalize(ref.side)+')':'')+'</span>'+
+          '<span class="wk-move-dur">'+ref.durationSeconds+'s</span>'+
+          '<span class="wk-move-chevron">'+CHEVRON_DOWN_SVG+'</span>'+
+        '</div>'+
+        (open ? '<div class="wk-move-how">'+esc(m.instructions)+'</div>' : '')+
+      '</div>';
+    }).join("");
+    return crumb+
+      '<div class="panel">'+
+        '<div class="wk-detail-head">'+
+          '<span class="wk-detail-icon">'+LEAF_SVG+'</span>'+
+          '<div class="wk-detail-info"><h2>'+esc(r.name)+'</h2><p class="wk-detail-sub">'+esc(r.description)+'</p></div>'+
+        '</div>'+
+        tiles + actions +
+        '<div class="panel-head" style="margin-top:4px"><h2 style="font-size:.9rem">Movements</h2></div>'+
+        movesHTML+
+      '</div>'+
+      (wkShowSchedule ? workoutScheduleModalHTML(r.id) : '');
+  }
+
+  function workoutScheduleModalHTML(routineId){
+    var r = routineById(routineId);
+    if(!r) return "";
+    var today = todayISO();
+    return '<div class="modal-backdrop" data-wk-schedule-backdrop><div class="modal-card">'+
+      '<h2>Schedule '+esc(r.name)+'</h2>'+
+      '<form class="stack" id="wk-schedule-form">'+
+        '<div class="field-row">'+
+          '<div class="f">Date<input type="hidden" id="wk-sched-date" value="'+today+'" data-picker="date"></div>'+
+          '<div class="f">Start time<input type="hidden" id="wk-sched-time" value="08:00" data-picker="time"></div>'+
+        '</div>'+
+        '<div class="f">Repeat<select id="wk-sched-repeat" data-picker="select">'+
+          [["none","Does not repeat"],["daily","Daily"],["weekdays","Weekdays"],["weekly","Weekly"]].map(function(rr){
+            return '<option value="'+rr[0]+'">'+rr[1]+'</option>';
+          }).join("")+
+        '</select></div>'+
+        '<label class="f" style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" id="wk-sched-reminder" style="width:auto"> Remind me</label>'+
+        '<div class="modal-actions">'+
+          '<button type="button" class="btn-ghost" data-wk-schedule-cancel>Cancel</button>'+
+          '<button type="submit" class="btn btn-primary" style="background:var(--teal)">Schedule</button>'+
+        '</div>'+
+      '</form>'+
+    '</div></div>';
+  }
+
+  /* ---- Routine player: 60s-per-movement auto-advancing timer ---- */
+  function wkTimerRingSVG(pct){
+    var r=48, c=2*Math.PI*r;
+    var dash = Math.max(0, Math.min(100,pct))/100*c;
+    return '<svg viewBox="0 0 110 110">'+
+      '<circle cx="55" cy="55" r="'+r+'" fill="none" stroke="var(--border)" stroke-width="7"/>'+
+      '<circle cx="55" cy="55" r="'+r+'" fill="none" stroke="var(--teal)" stroke-width="7" stroke-linecap="round" stroke-dasharray="'+dash.toFixed(1)+' '+c.toFixed(1)+'"/>'+
+    '</svg>';
+  }
+  function workoutPlayerHTML(){
+    var r = routineById(wkPlayer.routineId);
+    if(!r){ wkClearTicking(); wkPlayer=null; wkLibPage="categories"; return workoutLibraryCategoriesHTML(); }
+
+    if(wkPlayer.inTransition){
+      var nextRef = r.movements[wkPlayer.pendingIndex];
+      var nextM = nextRef ? movementById(nextRef.movementId) : null;
+      return '<div class="panel"><div class="wk-player">'+
+        '<div class="wk-player-progress">Up next</div>'+
+        '<div class="wk-move-title">'+(nextM?esc(nextM.name)+(nextRef.side?' ('+capitalize(nextRef.side)+')':''):'')+'</div>'+
+        '<div class="wk-timer-num" style="font-size:2.2rem;margin:14px 0">'+wkPlayer.transitionRemaining+'</div>'+
+        '<button type="button" class="btn btn-primary" style="background:var(--teal)" data-wk-skip-transition>Skip</button>'+
+      '</div></div>';
+    }
+
+    var ref = r.movements[wkPlayer.index];
+    var m = movementById(ref.movementId);
+    var total = ref.durationSeconds;
+    var ringPct = Math.max(0, Math.min(100, (wkPlayer.remaining/total)*100));
+    var overallPct = Math.round(((wkPlayer.index + (1 - wkPlayer.remaining/total)) / r.movements.length) * 100);
+    return '<div class="panel"><div class="wk-player">'+
+      '<div class="wk-player-progress">'+esc(r.name)+' · '+(wkPlayer.index+1)+' / '+r.movements.length+'</div>'+
+      '<div class="wk-timer-ring">'+wkTimerRingSVG(ringPct)+
+        '<div class="wk-timer-label"><div class="wk-timer-num">'+wkPlayer.remaining+'</div>'+(ref.side?'<div class="wk-timer-side">'+esc(ref.side)+' side</div>':'')+'</div>'+
+      '</div>'+
+      '<div class="wk-move-title">'+esc(m.name)+(ref.side?' ('+capitalize(ref.side)+')':'')+'</div>'+
+      '<div class="wk-move-instructions">'+esc(m.instructions)+'</div>'+
+      '<div class="wk-player-controls">'+
+        '<button type="button" class="wk-player-btn" data-wk-prev title="Previous">'+SKIPPREV_SVG+'</button>'+
+        '<button type="button" class="wk-player-btn primary" data-wk-toggle-pause title="'+(wkPlayer.paused?"Resume":"Pause")+'">'+(wkPlayer.paused?PLAY_SVG:PAUSE_SVG)+'</button>'+
+        '<button type="button" class="wk-player-btn" data-wk-next title="Next">'+SKIPNEXT_SVG+'</button>'+
+      '</div>'+
+      '<div class="wk-player-bar-track"><span class="wk-player-bar-fill" style="width:'+overallPct+'%"></span></div>'+
+      '<button type="button" class="wk-player-finish" data-wk-finish-early>Finish routine</button>'+
+    '</div></div>';
+  }
+
+  /* ---- Completion screen ---- */
+  var WK_FEEL_OPTIONS = [["much_better","Much better"],["better","Better"],["same","About the same"]];
+  function workoutCompleteHTML(){
+    var c = wkCompletion;
+    var eligibleChallenges = [];
+    state.challenges.list.forEach(function(ch){
+      if(ch.status!=="active") return;
+      (ch.goals||[]).forEach(function(g){ if(g.key==="mobility") eligibleChallenges.push({ challenge:ch, goal:g }); });
+    });
+    return '<div class="panel"><div class="wk-complete">'+
+      '<div class="wk-complete-icon">'+CHECK_SVG+'</div>'+
+      '<div class="wk-complete-title">Routine complete</div>'+
+      '<div class="wk-complete-sub">'+esc(c.routine.name)+' · '+fmtShort(c.completedAt)+' at '+fmtTimePretty(c.completedTime)+'</div>'+
+      '<div class="wk-complete-stats">'+
+        '<div><div class="wk-complete-stat-num">'+c.durationMin+'</div><div class="wk-complete-stat-label">Minutes</div></div>'+
+        '<div><div class="wk-complete-stat-num">'+c.routine.movements.length+'</div><div class="wk-complete-stat-label">Movements</div></div>'+
+      '</div>'+
+      '<p style="font-size:.82rem;color:var(--ink-soft);margin-bottom:6px">How do you feel? <span style="color:var(--ink-faint)">(optional)</span></p>'+
+      '<div class="wk-feel-row">'+WK_FEEL_OPTIONS.map(function(f){
+        return '<button type="button" class="wk-feel-btn'+(c.feeling===f[0]?" active":"")+'" data-wk-feel="'+f[0]+'">'+f[1]+'</button>';
+      }).join("")+'</div>'+
+      (eligibleChallenges.length ? '<div style="max-width:360px;margin:0 auto 14px;text-align:left">'+
+        '<label class="f">Link to a challenge (optional)<select id="wk-complete-challenge" data-picker="select">'+
+          '<option value="">Don’t link</option>'+
+          eligibleChallenges.map(function(e){ return '<option value="'+e.challenge.id+'"'+(c.linkedChallengeId===e.challenge.id?" selected":"")+'>'+esc(e.challenge.name)+' — '+esc(e.goal.title||"Mobility goal")+'</option>'; }).join("")+
+        '</select></label></div>' : '')+
+      (wkShowCompletionNote ? '<div style="max-width:360px;margin:0 auto 14px;text-align:left"><label class="f">Note<textarea id="wk-complete-note" rows="2" placeholder="optional">'+esc(c.note||"")+'</textarea></label></div>' : '')+
+      '<div class="wk-complete-actions">'+
+        (wkShowCompletionNote ? '' : '<button type="button" class="btn" data-wk-add-note>Add note</button>')+
+        '<button type="button" class="btn btn-primary" style="background:var(--teal)" data-wk-complete-done>Done</button>'+
+      '</div>'+
+    '</div></div>';
+  }
+
+  /* ---- History / Progress / Favorites ---- */
+  function workoutHistoryPageHTML(){
+    var list = state.workouts.slice().reverse().sort(byDateDesc);
+    var filterHTML = '<div class="wk-filter-row">'+
+      [["all","All"],["training","Training"],["recovery","Recovery"]].map(function(f){
+        return '<button type="button" class="wk-filter-btn'+(wkHistoryFilter===f[0]?" active":"")+'" data-wk-history-filter="'+f[0]+'">'+f[1]+'</button>';
+      }).join("")+'</div>';
+    var filtered = list.filter(function(w){
+      if(wkHistoryFilter==="all") return true;
+      var recovery = w.type==="stretching";
+      return wkHistoryFilter==="recovery" ? recovery : !recovery;
+    });
+    return '<div class="panel"><div class="panel-head"><h2>Workout History</h2><span class="hint">'+filtered.length+' shown</span></div>'+
+      filterHTML+
+      (filtered.length ? '<div class="rows">'+filtered.map(workoutRowHTML).join("")+'</div>' : '<p class="empty">Nothing here yet.</p>')+
+    '</div>';
+  }
+  function workoutProgressPageHTML(){
+    var today = todayISO();
+    var weekList = state.workouts.filter(function(w){ return inSameWeek(w.date, today); });
+    var training = weekList.filter(function(w){ return w.type!=="stretching"; });
+    var recovery = weekList.filter(function(w){ return w.type==="stretching"; });
+    var trainingMin = training.reduce(function(s,w){return s+Number(w.duration||0);},0);
+    var recoveryMin = recovery.reduce(function(s,w){return s+Number(w.duration||0);},0);
+    var byType = {};
+    training.forEach(function(w){ byType[w.type] = (byType[w.type]||0) + Number(w.duration||0); });
+    var typeEntries = Object.keys(byType).map(function(t){ return { label:capitalize(t), value:byType[t], color:colorForCategory(t) }; }).sort(function(a,b){ return b.value-a.value; });
+    return '<div class="stat-row">'+
+      '<div class="stat-tile" style="--accent:var(--good)"><div class="label">Training this week</div><div class="value">'+training.length+'</div><div class="sub">'+trainingMin+' min</div></div>'+
+      '<div class="stat-tile" style="--accent:var(--teal)"><div class="label">Recovery this week</div><div class="value">'+recovery.length+'</div><div class="sub">'+recoveryMin+' min</div></div>'+
+    '</div>'+
+    (typeEntries.length? '<div class="panel" style="margin-top:16px"><div class="panel-head"><h2 style="font-size:.9rem">Training minutes by type</h2></div>'+barListHTML(typeEntries,"var(--plum)",function(v){return v+"m";})+'</div>' : '<p class="empty" style="margin-top:16px">Log a workout to see training progress.</p>')+
+    '<p style="font-size:.78rem;color:var(--ink-faint);margin-top:14px">Recovery sessions (like a 10-minute stretch) are tracked separately here so they don’t distort your training volume.</p>';
+  }
+  function workoutFavoritesPageHTML(){
+    var favRoutines = WORKOUT_ROUTINES.filter(function(r){ return isFavoriteRoutine(r.id); });
+    var rowsHTML = !favRoutines.length ? '<p class="empty">No favorites yet. Star a routine in the Library to save it here.</p>' :
+      '<div class="rows">'+favRoutines.map(workoutRoutineRowHTML).join("")+'</div>';
+    return '<div class="panel"><div class="panel-head"><h2>Favorites</h2><span class="hint">'+favRoutines.length+' saved</span></div>'+rowsHTML+'</div>';
+  }
+
+  /* ---- dispatcher ---- */
+  function renderWorkouts(){
+    if(workoutsPage==="library"){
+      if(wkLibPage==="player" && wkPlayer) return workoutPlayerHTML();
+      if(wkLibPage==="complete" && wkCompletion) return workoutCompleteHTML();
+      if(wkLibPage==="routine" && wkActiveRoutineId && routineById(wkActiveRoutineId)) return workoutRoutineDetailHTML(wkActiveRoutineId);
+      if(wkLibPage==="category" && wkLibCategoryId) return workoutsHeadHTML()+workoutsSubtabsHTML()+workoutCategoryHTML(wkLibCategoryId);
+      wkLibPage = "categories"; wkActiveRoutineId = null; wkLibCategoryId = null;
+      return workoutsHeadHTML()+workoutsSubtabsHTML()+workoutLibraryCategoriesHTML();
+    }
+    var body;
+    if(workoutsPage==="history") body = workoutHistoryPageHTML();
+    else if(workoutsPage==="progress") body = workoutProgressPageHTML();
+    else if(workoutsPage==="favorites") body = workoutFavoritesPageHTML();
+    else body = workoutOverviewHTML();
+    return workoutsHeadHTML()+workoutsSubtabsHTML()+body;
+  }
+
+  /* ---- Routine player engine: a module-level interval that outlives any single render, started
+     only from startWorkoutPlayer()/resume actions — never re-armed inside wireView (that runs on
+     every renderViews() call and would stack duplicate intervals). ---- */
+  function wkClearTicking(){ if(wkPlayerTimer){ clearInterval(wkPlayerTimer); wkPlayerTimer=null; } }
+  function wkStartTicking(){
+    wkClearTicking();
+    wkPlayerTimer = setInterval(function(){
+      if(!wkPlayer || wkPlayer.paused) return;
+      if(wkPlayer.inTransition){
+        wkPlayer.transitionRemaining--;
+        if(wkPlayer.transitionRemaining<=0) wkAdvanceMovement(); else renderViews();
+        return;
+      }
+      wkPlayer.remaining--;
+      if(wkPlayer.remaining<=0) wkAdvanceMovement(); else renderViews();
+    }, 1000);
+  }
+  function wkAdvanceMovement(){
+    if(!wkPlayer) return;
+    var r = routineById(wkPlayer.routineId);
+    if(!r){ wkClearTicking(); wkPlayer=null; renderViews(); return; }
+    if(wkPlayer.inTransition){
+      wkPlayer.inTransition = false;
+      wkPlayer.index = wkPlayer.pendingIndex;
+      wkPlayer.remaining = r.movements[wkPlayer.index].durationSeconds;
+      renderViews();
+      return;
+    }
+    var nextIndex = wkPlayer.index+1;
+    if(nextIndex>=r.movements.length){ wkFinishRoutine(); return; }
+    if(wkShowTransitions){
+      wkPlayer.inTransition = true;
+      wkPlayer.transitionRemaining = 5;
+      wkPlayer.pendingIndex = nextIndex;
+      renderViews();
+    } else {
+      wkPlayer.index = nextIndex;
+      wkPlayer.remaining = r.movements[nextIndex].durationSeconds;
+      renderViews();
+    }
+  }
+  function wkGoToMovement(idx){
+    if(!wkPlayer) return;
+    var r = routineById(wkPlayer.routineId);
+    if(!r) return;
+    idx = Math.max(0, Math.min(r.movements.length-1, idx));
+    wkPlayer.inTransition = false;
+    wkPlayer.index = idx;
+    wkPlayer.remaining = r.movements[idx].durationSeconds;
+    renderViews();
+  }
+  /* Tapping a scheduled routine block on Today/Calendar launches the player directly (per spec:
+     "When tapped: Start routine"), rather than opening the generic edit-block modal. An
+     already-completed block instead jumps to the Workout History it now belongs to. */
+  function openWorkoutBlock(blockId){
+    var b = state.timeBlocks.filter(function(x){ return x.id===blockId; })[0];
+    if(!b || !b.linkedId) return;
+    if(b.completed){ goToTab("workouts"); workoutsPage = "history"; renderViews(); return; }
+    startWorkoutPlayer(b.linkedId, b.id);
+  }
+  function startWorkoutPlayer(routineId, sourceBlockId){
+    var r = routineById(routineId);
+    if(!r || !r.movements.length) return;
+    wkPlayer = { routineId:routineId, index:0, remaining:r.movements[0].durationSeconds, paused:false,
+      inTransition:false, pendingIndex:null, sourceBlockId:sourceBlockId||null };
+    workoutsPage = "library"; wkLibPage = "player"; wkLibCategoryId = wkLibCategoryId || "stretching";
+    activeTab = "workouts";
+    renderTabs();
+    wkStartTicking();
+    renderViews();
+  }
+  /* Completing a routine writes into the SAME state.workouts collection the freeform Log form
+     writes to (type:"stretching", routineId/routineName set) — there is no separate database for
+     Library-completed sessions, per the "reuse existing workout data" requirement. */
+  function wkFinishRoutine(){
+    wkClearTicking();
+    var r = routineById(wkPlayer ? wkPlayer.routineId : null);
+    var sourceBlockId = wkPlayer ? wkPlayer.sourceBlockId : null;
+    var now = new Date();
+    var durationMin = r ? routineDurationMin(r) : 0;
+    var completedAt = todayISO();
+    wkCompletion = {
+      routine: r, durationMin: durationMin, completedAt: completedAt,
+      completedTime: pad(now.getHours())+":"+pad(now.getMinutes()),
+      feeling: "", note: "", linkedChallengeId: "", savedWorkoutId: null, sourceBlockId: sourceBlockId
+    };
+    if(r){
+      var wk = normalizeWorkout({ id:uid(), type:"stretching", date:completedAt, duration:durationMin, routineId:r.id, routineName:r.name });
+      state.workouts.push(wk);
+      wkCompletion.savedWorkoutId = wk.id;
+    }
+    if(sourceBlockId){
+      var b = state.timeBlocks.filter(function(x){ return x.id===sourceBlockId; })[0];
+      if(b){ b.completed = true; b.resultWorkoutId = wkCompletion.savedWorkoutId; }
+    }
+    wkPlayer = null;
+    wkLibPage = "complete";
+    wkShowCompletionNote = false;
+    save();
+    renderViews();
   }
 
   /* ============ READING view (books) ============ */
@@ -7777,8 +8427,9 @@
     var meta = timeBlockCatMeta(b.category);
     var completed = blockAutoCompleted(b);
     var dur = blockDurationMin(b);
-    var metaText = completed ? blockLoggedDetail(b) : (b.notes ? esc(b.notes) : (b.endTime ? dur+" min" : ""));
-    var clickAttr = opts.clickOpensDay ? ' data-cal-open-day="'+b.date+'"' : ' data-block-edit="'+b.id+'"';
+    var isRoutine = b.linkedType==="workoutTemplate";
+    var metaText = completed ? blockLoggedDetail(b) : (b.notes ? esc(b.notes) : ((b.endTime||isRoutine) ? dur+" min" : ""));
+    var clickAttr = opts.clickOpensDay ? ' data-cal-open-day="'+b.date+'"' : (isRoutine ? ' data-wk-open-block="'+b.id+'"' : ' data-block-edit="'+b.id+'"');
     return '<div class="sched-row"'+clickAttr+'>'+
       '<span class="sched-time">'+b.startTime+'</span>'+
       '<span class="sched-swatch" style="background:'+meta.color+'"></span>'+
@@ -7797,9 +8448,11 @@
     var height = Math.max(24, dur*PX_PER_MIN);
     if(top+height>totalHeight) height = Math.max(24, totalHeight-top);
     var completed = blockAutoCompleted(b);
-    var metaLine = completed ? blockLoggedDetail(b) : (b.notes ? esc(b.notes) : (b.endTime? dur+" min" : ""));
+    var isRoutine = b.linkedType==="workoutTemplate";
+    var metaLine = completed ? blockLoggedDetail(b) : (b.notes ? esc(b.notes) : ((b.endTime||isRoutine)? dur+" min" : ""));
     var showMeta = metaLine && height>=48;
-    return '<div class="cal-event" style="top:'+top+'px;height:'+height+'px;--accent:'+meta.color+'" data-block-edit="'+b.id+'">'+
+    var clickAttr = isRoutine ? 'data-wk-open-block="'+b.id+'"' : 'data-block-edit="'+b.id+'"';
+    return '<div class="cal-event" style="top:'+top+'px;height:'+height+'px;--accent:'+meta.color+'" '+clickAttr+'>'+
       '<div class="cal-event-time">'+b.startTime+(b.endTime?"–"+b.endTime:"")+'</div>'+
       '<div class="cal-event-title'+(completed?" completed":"")+'">'+(completed?"✓ ":"")+esc(b.title)+'</div>'+
       (showMeta ? '<div class="cal-event-meta">'+metaLine+'</div>' : '')+
@@ -9601,6 +10254,9 @@
           todayAddBlockPrefill = null; todayShowAddBlock = true; renderViews();
         });
       });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-open-block]"), function(el){
+        el.addEventListener("click", function(){ openWorkoutBlock(el.getAttribute("data-wk-open-block")); });
+      });
       Array.prototype.forEach.call(document.querySelectorAll("[data-block-toggle]"), function(btn){
         btn.addEventListener("click", function(ev){
           ev.stopPropagation();
@@ -9826,6 +10482,9 @@
           calEditingBlockId = el.getAttribute("data-block-edit");
           calAddBlockPrefill = null; calShowAddBlock = true; renderViews();
         });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-open-block]"), function(el){
+        el.addEventListener("click", function(){ openWorkoutBlock(el.getAttribute("data-wk-open-block")); });
       });
       Array.prototype.forEach.call(document.querySelectorAll("[data-block-toggle]"), function(btn){
         btn.addEventListener("click", function(ev){
@@ -10319,6 +10978,153 @@
           state.workouts = state.workouts.filter(function(w){ return w.id!==btn.getAttribute("data-del-workout"); });
           save(); renderViews();
         });
+      });
+
+      /* ---- Workout Library: subtabs + navigation ---- */
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-page]"), function(btn){
+        btn.addEventListener("click", function(){
+          if(wkPlayer){ wkClearTicking(); wkPlayer=null; } // navigating away abandons an in-progress player rather than silently completing it
+          workoutsPage = btn.getAttribute("data-wk-page");
+          if(workoutsPage==="library"){ wkLibPage="categories"; wkLibCategoryId=null; wkActiveRoutineId=null; }
+          renderViews();
+        });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-history-filter]"), function(btn){
+        btn.addEventListener("click", function(){ wkHistoryFilter = btn.getAttribute("data-wk-history-filter"); renderViews(); });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-open-category]"), function(btn){
+        btn.addEventListener("click", function(){
+          wkLibCategoryId = btn.getAttribute("data-wk-open-category"); wkLibPage="category"; wkLibFilter="all"; renderViews();
+        });
+      });
+      var wkBackCategories = document.querySelector("[data-wk-back-categories]");
+      if(wkBackCategories) wkBackCategories.addEventListener("click", function(){
+        wkLibPage="categories"; wkLibCategoryId=null; renderViews();
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-filter]"), function(btn){
+        btn.addEventListener("click", function(){ wkLibFilter = btn.getAttribute("data-wk-filter"); renderViews(); });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-open-routine]"), function(el){
+        el.addEventListener("click", function(){
+          wkActiveRoutineId = el.getAttribute("data-wk-open-routine");
+          wkLibCategoryId = wkLibCategoryId || "stretching";
+          workoutsPage = "library"; wkLibPage = "routine"; wkExpandedMovementIdx = null; wkShowSchedule = false;
+          renderViews();
+        });
+      });
+      var wkBackCategory = document.querySelector("[data-wk-back-category]");
+      if(wkBackCategory) wkBackCategory.addEventListener("click", function(){
+        wkLibPage="category"; wkActiveRoutineId=null; renderViews();
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-move-toggle]"), function(el){
+        el.addEventListener("click", function(){
+          var idx = Number(el.getAttribute("data-wk-move-toggle"));
+          wkExpandedMovementIdx = (wkExpandedMovementIdx===idx) ? null : idx;
+          renderViews();
+        });
+      });
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-toggle-fav]"), function(btn){
+        btn.addEventListener("click", function(ev){
+          ev.stopPropagation();
+          toggleFavoriteRoutine(btn.getAttribute("data-wk-toggle-fav"));
+          renderViews();
+        });
+      });
+
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-start-routine]"), function(btn){
+        btn.addEventListener("click", function(){ startWorkoutPlayer(btn.getAttribute("data-wk-start-routine"), null); });
+      });
+
+      /* ---- Schedule a routine (creates a linked Calendar/Today time block — not a separate
+         scheduling system, and not a duplicate Workout record: the record only appears once the
+         routine is actually completed, via wkFinishRoutine()). ---- */
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-open-schedule]"), function(btn){
+        btn.addEventListener("click", function(){ wkShowSchedule = true; renderViews(); });
+      });
+      var wkScheduleCancel = document.querySelector("[data-wk-schedule-cancel]");
+      if(wkScheduleCancel) wkScheduleCancel.addEventListener("click", function(){ wkShowSchedule = false; renderViews(); });
+      var wkScheduleBackdrop = document.querySelector("[data-wk-schedule-backdrop]");
+      if(wkScheduleBackdrop) wkScheduleBackdrop.addEventListener("click", function(ev){
+        if(ev.target===wkScheduleBackdrop){ wkShowSchedule = false; renderViews(); }
+      });
+      var wkScheduleForm = document.getElementById("wk-schedule-form");
+      if(wkScheduleForm) wkScheduleForm.addEventListener("submit", function(ev){
+        ev.preventDefault();
+        var r = routineById(wkActiveRoutineId);
+        if(!r) return;
+        var date = document.getElementById("wk-sched-date").value || todayISO();
+        var start = document.getElementById("wk-sched-time").value || "08:00";
+        var repeat = document.getElementById("wk-sched-repeat").value;
+        var reminder = document.getElementById("wk-sched-reminder").checked;
+        state.timeBlocks.push({
+          id: uid(), title:r.name, date:date, category:"training", startTime:start, endTime:"",
+          duration: routineDurationMin(r), notes:"", completed:false,
+          linkedType:"workoutTemplate", linkedId:r.id, resultWorkoutId:null,
+          repeatRule:repeat, reminder:reminder,
+          createdAt: todayISO(), updatedAt: todayISO()
+        });
+        wkShowSchedule = false;
+        save(); renderViews();
+      });
+
+      /* ---- Routine player controls ---- */
+      var wkPrevBtn = document.querySelector("[data-wk-prev]");
+      if(wkPrevBtn) wkPrevBtn.addEventListener("click", function(){ if(wkPlayer) wkGoToMovement(wkPlayer.index-1); });
+      var wkNextBtn = document.querySelector("[data-wk-next]");
+      if(wkNextBtn) wkNextBtn.addEventListener("click", function(){
+        if(!wkPlayer) return;
+        var r = routineById(wkPlayer.routineId);
+        if(r && wkPlayer.index+1 < r.movements.length) wkGoToMovement(wkPlayer.index+1);
+        else wkFinishRoutine();
+      });
+      var wkPauseBtn = document.querySelector("[data-wk-toggle-pause]");
+      if(wkPauseBtn) wkPauseBtn.addEventListener("click", function(){ if(wkPlayer){ wkPlayer.paused = !wkPlayer.paused; renderViews(); } });
+      var wkFinishBtn = document.querySelector("[data-wk-finish-early]");
+      if(wkFinishBtn) wkFinishBtn.addEventListener("click", function(){ wkFinishRoutine(); });
+      var wkSkipTransitionBtn = document.querySelector("[data-wk-skip-transition]");
+      if(wkSkipTransitionBtn) wkSkipTransitionBtn.addEventListener("click", function(){ wkAdvanceMovement(); });
+
+      /* ---- Completion screen ---- */
+      Array.prototype.forEach.call(document.querySelectorAll("[data-wk-feel]"), function(btn){
+        btn.addEventListener("click", function(){
+          if(!wkCompletion) return;
+          wkCompletion.feeling = btn.getAttribute("data-wk-feel");
+          var noteEl = document.getElementById("wk-complete-note");
+          if(noteEl) wkCompletion.note = noteEl.value;
+          var chalSel = document.getElementById("wk-complete-challenge");
+          if(chalSel) wkCompletion.linkedChallengeId = chalSel.value;
+          renderViews();
+        });
+      });
+      var wkAddNoteBtn = document.querySelector("[data-wk-add-note]");
+      if(wkAddNoteBtn) wkAddNoteBtn.addEventListener("click", function(){
+        if(!wkCompletion) return;
+        var chalSel = document.getElementById("wk-complete-challenge");
+        if(chalSel) wkCompletion.linkedChallengeId = chalSel.value;
+        wkShowCompletionNote = true;
+        renderViews();
+      });
+      var wkCompleteDoneBtn = document.querySelector("[data-wk-complete-done]");
+      if(wkCompleteDoneBtn) wkCompleteDoneBtn.addEventListener("click", function(){
+        if(wkCompletion && wkCompletion.savedWorkoutId){
+          var wk = state.workouts.filter(function(w){ return w.id===wkCompletion.savedWorkoutId; })[0];
+          if(wk){
+            wk.feeling = wkCompletion.feeling || "";
+            var noteEl = document.getElementById("wk-complete-note");
+            if(noteEl) wk.notes = noteEl.value.trim();
+            var chalSel = document.getElementById("wk-complete-challenge");
+            /* Challenge linking is opt-in only — a challenge activity record is created ONLY when the
+               user explicitly picked one here, never automatically just because a matching goal exists. */
+            if(chalSel && chalSel.value){
+              state.challenges.activities.push(normalizeChallengeActivity({
+                challengeId: chalSel.value, type:"mobility", date: wkCompletion.completedAt,
+                durationMinutes: wkCompletion.durationMin, notes:"Stretching: "+wkCompletion.routine.name
+              }));
+            }
+          }
+        }
+        wkCompletion = null; wkLibPage = "categories"; wkActiveRoutineId = null; wkShowCompletionNote = false;
+        save(); renderViews();
       });
     }
 
