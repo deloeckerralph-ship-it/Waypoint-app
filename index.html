@@ -3052,6 +3052,28 @@
     var h=0; for(var i=0;i<name.length;i++) h = (h*31 + name.charCodeAt(i)) >>> 0;
     return CAT_COLORS[h % CAT_COLORS.length];
   }
+  /* Brighter, more colorful palette used specifically for Expense categories (the pie chart,
+     its legend, Recent Expenses rows, the Budget Planner, and Trip Expenses — every place that
+     shows an expense's own category color) — reuses the same vivid --chart-* variants the Study
+     donut already established for "this needs more punch than the muted UI palette elsewhere."
+     Fixed order (not hashed) matched 1:1 to PRESET_CATS, so a category's color never shifts, and
+     chosen/ordered by running scripts/validate_palette.js from the dataviz skill (adjacent pairs,
+     both themes) — this ordering is the one that cleared every CVD/normal-vision check. */
+  var EXPENSE_CAT_COLORS = {
+    "Food": "var(--chart-ember)",
+    "Housing": "var(--chart-blue)",
+    "Transport": "var(--chart-teal)",
+    "Health": "var(--chart-rose)",
+    "Fun": "var(--chart-purple)",
+    "Gear": "var(--chart-mustard)",
+    "Other": "var(--chart-plum)"
+  };
+  var EXPENSE_CAT_COLOR_LIST = ["var(--chart-ember)","var(--chart-blue)","var(--chart-teal)","var(--chart-rose)","var(--chart-purple)","var(--chart-mustard)","var(--chart-plum)"];
+  function colorForExpenseCategory(name){
+    if(EXPENSE_CAT_COLORS[name]) return EXPENSE_CAT_COLORS[name];
+    var h=0; for(var i=0;i<name.length;i++) h = (h*31 + name.charCodeAt(i)) >>> 0;
+    return EXPENSE_CAT_COLOR_LIST[h % EXPENSE_CAT_COLOR_LIST.length];
+  }
 
   /* generic vertical 7-day bar chart, used by Habits/Today/Reading/Studying */
   function dayLetter(iso){
@@ -4603,7 +4625,7 @@
     if(!list.length) return '<p class="empty">Nothing logged yet.</p>';
     return '<div class="rows">'+ list.map(function(e){
       var delBtn = kind==="expense" ? '<button class="btn-ghost" data-del-expense="'+e.id+'" title="Delete">✕</button>' : '';
-      return '<div class="row">'+catIconHTML(e.category||"Other", colorForCategory(e.category||"other"))+
+      return '<div class="row">'+catIconHTML(e.category||"Other", colorForExpenseCategory(e.category||"other"))+
         '<div class="main"><div class="title">'+esc(e.category||"Other")+(e.note? ' — '+esc(e.note):'')+'</div><div class="meta">'+daysAgoLabel(e.date)+'</div></div>'+
         '<div class="amount">'+money(Number(e.amount||0))+'</div>'+delBtn+'</div>';
     }).join("") + '</div>';
@@ -5023,35 +5045,46 @@
       var c = e.category || "Other";
       byCat[c] = (byCat[c]||0) + Number(e.amount||0);
     });
-    var entries = Object.keys(byCat).map(function(c){ return { label:c, value:byCat[c], color:colorForCategory(c) }; })
+    var entries = Object.keys(byCat).map(function(c){ return { label:c, value:byCat[c], color:colorForExpenseCategory(c) }; })
       .sort(function(a,b){ return b.value-a.value; });
     return { list:list, total:total, entries:entries };
   }
   function getBudgetsForMonth(y,m){ return state.budgets[monthKey(y,m)] || {}; }
 
+  /* A true filled pie (solid wedges reaching the outer edge, not a stroked ring) with a small
+     solid medallion pinned in the center for the total/count label — reads as a real "circle
+     chart" rather than a donut with a hole. Each wedge gets a thin gap in the surrounding
+     panel's own background color between it and its neighbors (the mark-spec "surface gap"
+     technique — a same-color inset line, not a contrasting border) so seven colorful slices
+     stay legible as separate wedges instead of bleeding into one ring of color. */
   function pieChartSVG(entries, size, centerLabel, centerSub){
     var total = entries.reduce(function(s,e){ return s+e.value; },0);
-    var cx = size/2, cy = size/2, r = size/2 - size*0.09;
-    var strokeW = size*0.26;
-    var c = 2*Math.PI*r;
+    var cx = size/2, cy = size/2, r = size/2 - 1;
+    var medR = size*0.29;
     var segs = "";
+    var live = entries.filter(function(e){ return e.value>0; });
     if(total<=0){
-      segs = '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="var(--surface-2)" stroke-width="'+strokeW+'"/>';
+      segs = '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="var(--surface-2)"/>';
+    } else if(live.length===1){
+      segs = '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="'+live[0].color+'"><title>'+esc(live[0].label)+': '+money(live[0].value)+'</title></circle>';
     } else {
-      var offset = 0;
-      entries.filter(function(e){ return e.value>0; }).forEach(function(e){
-        var dash = e.value/total*c;
-        segs += '<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="none" stroke="'+e.color+'" stroke-width="'+strokeW+'" '+
-          'stroke-dasharray="'+dash.toFixed(1)+' '+(c-dash).toFixed(1)+'" stroke-dashoffset="'+(-offset).toFixed(1)+'" '+
-          'transform="rotate(-90 '+cx+' '+cy+')"><title>'+esc(e.label)+': '+money(e.value)+'</title></circle>';
-        offset += dash;
+      var angle = -Math.PI/2; // start at 12 o'clock, sweep clockwise
+      live.forEach(function(e){
+        var next = angle + (e.value/total)*2*Math.PI;
+        var x1 = (cx + r*Math.cos(angle)).toFixed(2), y1 = (cy + r*Math.sin(angle)).toFixed(2);
+        var x2 = (cx + r*Math.cos(next)).toFixed(2), y2 = (cy + r*Math.sin(next)).toFixed(2);
+        var largeArc = (next-angle) > Math.PI ? 1 : 0;
+        var d = 'M '+cx+' '+cy+' L '+x1+' '+y1+' A '+r+' '+r+' 0 '+largeArc+' 1 '+x2+' '+y2+' Z';
+        segs += '<path d="'+d+'" fill="'+e.color+'" stroke="var(--surface)" stroke-width="2" stroke-linejoin="round"><title>'+esc(e.label)+': '+money(e.value)+'</title></path>';
+        angle = next;
       });
     }
+    var medallion = '<circle cx="'+cx+'" cy="'+cy+'" r="'+medR+'" fill="var(--surface)" stroke="var(--border)" stroke-width="1"/>';
     var labelHTML = centerLabel ?
-      '<text x="'+cx+'" y="'+(cy-2)+'" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="'+Math.round(size*0.105)+'" font-weight="700" fill="var(--ink)">'+esc(centerLabel)+'</text>'+
-      (centerSub ? '<text x="'+cx+'" y="'+(cy+size*0.11)+'" text-anchor="middle" font-family="Libre Franklin, sans-serif" font-size="'+Math.round(size*0.058)+'" fill="var(--ink-faint)">'+esc(centerSub)+'</text>' : '')
+      '<text x="'+cx+'" y="'+(cy-2)+'" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="'+Math.round(size*0.1)+'" font-weight="700" fill="var(--ink)">'+esc(centerLabel)+'</text>'+
+      (centerSub ? '<text x="'+cx+'" y="'+(cy+size*0.105)+'" text-anchor="middle" font-family="Libre Franklin, sans-serif" font-size="'+Math.round(size*0.055)+'" fill="var(--ink-faint)">'+esc(centerSub)+'</text>' : '')
       : '';
-    return '<svg viewBox="0 0 '+size+' '+size+'" width="'+size+'" height="'+size+'">'+segs+labelHTML+'</svg>';
+    return '<svg viewBox="0 0 '+size+' '+size+'" width="'+size+'" height="'+size+'">'+segs+medallion+labelHTML+'</svg>';
   }
 
   function renderExpenses(){
@@ -5118,7 +5151,7 @@
     mt.entries.forEach(function(c){ if(c.value>0) budgetCats[c.label]=true; });
     var budgetRows = Object.keys(budgetCats).sort().map(function(c){
       var spentEntry = mt.entries.find(function(e){ return e.label===c; });
-      return { label:c, color:colorForCategory(c), spent: spentEntry?spentEntry.value:0, budget: Number(budgets[c]||0) };
+      return { label:c, color:colorForExpenseCategory(c), spent: spentEntry?spentEntry.value:0, budget: Number(budgets[c]||0) };
     });
     var totalBudget = budgetRows.reduce(function(s,r){ return s+r.budget; },0);
     var totalSpentBudgeted = budgetRows.reduce(function(s,r){ return s+r.spent; },0);
@@ -8036,7 +8069,10 @@
       list.innerHTML = rowsHtml;
       pop.appendChild(list);
       wrap.appendChild(pop);
-      var sel = list.querySelector(".selected");
+      // Scroll to the current value if one's set; otherwise default to a reasonable waking-hours
+      // time (5am) rather than opening at the very top of the list (midnight) — the list itself
+      // still scrolls freely through the full 24 hours either way.
+      var sel = list.querySelector(".selected") || list.querySelector('[data-fp-time="05:00"]');
       if(sel) sel.scrollIntoView({ block:"center" });
       list.addEventListener("click", function(ev){
         var btn = ev.target.closest("[data-fp-time]");
@@ -9257,7 +9293,7 @@
       '</form></div>';
     html += '<div class="panel"><div class="panel-head"><h2>Trip expenses</h2></div>'+
       (list.length ? '<div class="stack">'+list.map(function(e){
-        return '<div class="row">'+catIconHTML(e.category||"Other", colorForCategory(e.category||"Other"))+
+        return '<div class="row">'+catIconHTML(e.category||"Other", colorForExpenseCategory(e.category||"Other"))+
           '<div class="main"><div class="title">'+esc(e.category||"Other")+(e.note?" — "+esc(e.note):"")+'</div><div class="meta">'+fmtShort(e.date)+'</div></div>'+
           '<span class="bar-val">'+money(Number(e.amount||0))+'</span>'+
         '</div>';
@@ -9649,9 +9685,16 @@
     if(tab==="calendar"){
       Array.prototype.forEach.call(document.querySelectorAll("[data-cal-date]"), function(btn){
         btn.addEventListener("click", function(){
-          calSelectedDate = btn.getAttribute("data-cal-date");
+          var iso = btn.getAttribute("data-cal-date");
+          calSelectedDate = iso;
           calSelDayTab = "overview";
-          calShowAddBlock = false; calEditingBlockId = null; calAddBlockPrefill = null;
+          // Pressing a date on the calendar now opens the add-event modal for that date right
+          // away, instead of just selecting it and requiring a separate "+ Add" click. Cancelling
+          // the modal still leaves the day selected below, so browsing what's already on that
+          // day is one Cancel tap away rather than lost.
+          calEditingBlockId = null;
+          calAddBlockPrefill = { date: iso, start: "" };
+          calShowAddBlock = true;
           renderViews();
         });
       });
